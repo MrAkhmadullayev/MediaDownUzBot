@@ -1,3 +1,4 @@
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -5,7 +6,8 @@ import pytest
 import yt_dlp
 
 from app.config import Settings
-from app.services.media import MediaProcessingError, MediaService
+from app.enums import MediaType
+from app.services.media import MediaKind, MediaProcessingError, MediaService
 
 
 def test_base_options_keep_certificate_verification_enabled(tmp_path) -> None:
@@ -80,6 +82,137 @@ def test_configured_cookie_file_uses_a_private_writable_copy(tmp_path) -> None:
 
     assert not Path(prepared_cookie).exists()
     assert cookie_file.read_text() == "# Netscape HTTP Cookie File\n"
+
+
+def test_instagram_cookie_file_uses_a_private_copy(tmp_path) -> None:
+    cookie_file = tmp_path / "instagram-cookies.txt"
+    cookie_file.write_text("# Netscape HTTP Cookie File\n")
+    cookie_file.chmod(0o400)
+    service = MediaService(Settings(VIDEOS_DIR=tmp_path, INSTAGRAM_COOKIES_FILE=cookie_file))
+
+    with service._prepared_instagram_cookie() as prepared_cookie:
+        assert prepared_cookie is not None
+        assert prepared_cookie != cookie_file
+        assert prepared_cookie.read_text() == "# Netscape HTTP Cookie File\n"
+        assert prepared_cookie.stat().st_mode & 0o777 == 0o600
+
+    assert not prepared_cookie.exists()
+    assert cookie_file.read_text() == "# Netscape HTTP Cookie File\n"
+
+
+def test_missing_instagram_cookie_is_reported_as_login_required(tmp_path) -> None:
+    service = MediaService(
+        Settings(VIDEOS_DIR=tmp_path, INSTAGRAM_COOKIES_FILE=tmp_path / "missing.txt")
+    )
+
+    with pytest.raises(MediaProcessingError) as caught, service._prepared_instagram_cookie():
+        pass
+
+    assert caught.value.code == "login_required"
+
+
+def test_instagram_probe_does_not_require_video_metadata(tmp_path, monkeypatch) -> None:
+    def fail_youtube_dl(*args, **kwargs):
+        raise AssertionError("Instagram probe yt-dlp ishlatmasligi kerak")
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", fail_youtube_dl)
+    service = MediaService(Settings(VIDEOS_DIR=tmp_path))
+
+    info = service.probe("https://www.instagram.com/p/DOdWFmdCoKQ/")
+
+    assert info.title == "Instagram media"
+    assert info.qualities == []
+    assert info.duration_seconds is None
+
+
+def test_instagram_download_returns_all_carousel_items(tmp_path, monkeypatch) -> None:
+    service = MediaService(Settings(VIDEOS_DIR=tmp_path))
+
+    def fake_run(command, **kwargs):
+        destination = Path(command[command.index("-D") + 1])
+        (destination / "001_1.jpg").write_bytes(b"photo")
+        (destination / "002_2.mp4").write_bytes(b"video")
+        (destination / "003_3.gif").write_bytes(b"animation")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = service.download(
+        "https://www.instagram.com/p/DOdWFmdCoKQ/",
+        uuid.uuid4(),
+        MediaType.VIDEO,
+        "best",
+    )
+
+    assert [item.path.name for item in result.items] == [
+        "001_1.jpg",
+        "002_2.mp4",
+        "003_3.gif",
+    ]
+    assert [item.kind for item in result.items] == [
+        MediaKind.PHOTO,
+        MediaKind.VIDEO,
+        MediaKind.ANIMATION,
+    ]
+    assert result.size_bytes == len(b"photo") + len(b"video") + len(b"animation")
+
+
+def test_instagram_download_uses_cookie_and_safe_argument_list(tmp_path, monkeypatch) -> None:
+    cookie_file = tmp_path / "instagram-cookies.txt"
+    cookie_file.write_text("# Netscape HTTP Cookie File\n")
+    service = MediaService(Settings(VIDEOS_DIR=tmp_path, INSTAGRAM_COOKIES_FILE=cookie_file))
+    captured: list[str] = []
+
+    def fake_run(command, **kwargs):
+        captured.extend(command)
+        destination = Path(command[command.index("-D") + 1])
+        (destination / "001_1.jpg").write_bytes(b"photo")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    service.download(
+        "https://www.instagram.com/p/DOdWFmdCoKQ/",
+        uuid.uuid4(),
+        MediaType.VIDEO,
+        "best",
+    )
+
+    assert captured[1:3] == ["-m", "gallery_dl"]
+    assert "-C" in captured
+    assert captured[-1] == "https://www.instagram.com/p/DOdWFmdCoKQ/"
+    assert not Path(captured[captured.index("-C") + 1]).exists()
+
+
+def test_instagram_cookie_error_is_not_reported_as_youtube_verification() -> None:
+    error = MediaService._mapped_instagram_error("Cookies are required to log in")
+
+    assert error.code == "login_required"
+
+
+def test_instagram_oversized_download_is_reported_from_extractor_output(
+    tmp_path, monkeypatch
+) -> None:
+    service = MediaService(Settings(VIDEOS_DIR=tmp_path))
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            "",
+            "Skipping 001_1.mp4 (File size exceeds --filesize-max)",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(MediaProcessingError) as caught:
+        service.download(
+            "https://www.instagram.com/p/DOdWFmdCoKQ/",
+            uuid.uuid4(),
+            MediaType.VIDEO,
+            "best",
+        )
+
+    assert caught.value.code == "too_large"
 
 
 def test_quality_extraction_and_limit(tmp_path) -> None:

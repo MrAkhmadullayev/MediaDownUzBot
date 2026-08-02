@@ -20,5 +20,6 @@ def test_local_telegram_api_settings() -> None:
 
 
 def test_empty_cookie_path_is_none() -> None:
-    settings = Settings(YTDLP_COOKIES_FILE="")
+    settings = Settings(YTDLP_COOKIES_FILE="", INSTAGRAM_COOKIES_FILE="")
     assert settings.YTDLP_COOKIES_FILE is None
+    assert settings.INSTAGRAM_COOKIES_FILE is None

@@ -1,13 +1,17 @@
 import math
 import shutil
+import subprocess
+import sys
 import tempfile
 import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yt_dlp
 from yt_dlp.networking.exceptions import RequestError
@@ -33,12 +37,39 @@ class MediaInfo:
     quality_sizes: dict[str, dict[str, int | None]]
 
 
+class MediaKind(StrEnum):
+    VIDEO = "video"
+    PHOTO = "photo"
+    ANIMATION = "animation"
+    DOCUMENT = "document"
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadedItem:
+    path: Path
+    size_bytes: int
+    kind: MediaKind
+
+
 @dataclass(frozen=True, slots=True)
 class DownloadedMedia:
     path: Path
     title: str
     duration_seconds: int | None
     size_bytes: int
+    items: tuple[DownloadedItem, ...] = ()
+
+    @property
+    def media_items(self) -> tuple[DownloadedItem, ...]:
+        if self.items:
+            return self.items
+        return (
+            DownloadedItem(
+                path=self.path,
+                size_bytes=self.size_bytes,
+                kind=media_kind_for_path(self.path),
+            ),
+        )
 
 
 class MediaService:
@@ -46,6 +77,13 @@ class MediaService:
         self.settings = settings
 
     def probe(self, url: str) -> MediaInfo:
+        if self._is_instagram_url(url):
+            return MediaInfo(
+                title="Instagram media",
+                duration_seconds=None,
+                qualities=[],
+                quality_sizes={"video": {}, "audio": {}},
+            )
         try:
             with self._prepared_options(url) as options:
                 options.update({"skip_download": True})
@@ -75,6 +113,8 @@ class MediaService:
         quality: str,
     ) -> DownloadedMedia:
         work_dir = self._prepare_work_dir(job_id)
+        if self._is_instagram_url(url):
+            return self._download_instagram(url, work_dir)
         try:
             with self._prepared_options(url) as options:
                 options.update(
@@ -110,6 +150,76 @@ class MediaService:
         except (DownloadError, RequestError) as exc:
             raise self._mapped_error(str(exc)) from None
         except Exception as exc:
+            raise MediaProcessingError("internal", type(exc).__name__) from None
+
+    def _download_instagram(self, url: str, work_dir: Path) -> DownloadedMedia:
+        try:
+            with self._prepared_instagram_cookie() as cookie_file:
+                command = [
+                    sys.executable,
+                    "-m",
+                    "gallery_dl",
+                    "--config-ignore",
+                    "--no-input",
+                    "--no-part",
+                    "--no-mtime",
+                    "--no-skip",
+                    "--restrict-filenames",
+                    "ascii",
+                    "--retries",
+                    "5",
+                    "--http-timeout",
+                    "30",
+                    "--sleep-request",
+                    "0.5",
+                    "--filesize-max",
+                    str(self.settings.upload_limit_bytes),
+                    "--range",
+                    "1-100",
+                    "-o",
+                    "extractor.instagram.videos=true",
+                    "-o",
+                    "extractor.instagram.audio=false",
+                    "-o",
+                    "extractor.instagram.previews=false",
+                    "-f",
+                    "{num:>03}_{media_id}.{extension}",
+                    "-D",
+                    str(work_dir),
+                ]
+                if cookie_file is not None:
+                    command.extend(("-C", str(cookie_file)))
+                command.append(url)
+                result = subprocess.run(
+                    command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.settings.MAX_DOWNLOAD_SECONDS,
+                )
+            output = "\n".join((result.stdout, result.stderr)).strip()
+            if result.returncode != 0:
+                raise self._mapped_instagram_error(output)
+            items = self._instagram_output_files(work_dir)
+            if not items:
+                if self._is_oversized_output(output):
+                    raise MediaProcessingError("too_large")
+                raise self._mapped_instagram_error(output or "No downloadable media found")
+            if any(item.size_bytes > self.settings.upload_limit_bytes for item in items):
+                raise MediaProcessingError("too_large")
+            size = sum(item.size_bytes for item in items)
+            return DownloadedMedia(
+                path=items[0].path,
+                title="Instagram media",
+                duration_seconds=None,
+                size_bytes=size,
+                items=items,
+            )
+        except MediaProcessingError:
+            raise
+        except subprocess.TimeoutExpired:
+            raise MediaProcessingError("timeout") from None
+        except OSError as exc:
             raise MediaProcessingError("internal", type(exc).__name__) from None
 
     def cleanup(self, job_id: uuid.UUID) -> None:
@@ -176,6 +286,20 @@ class MediaService:
             cookie_file.chmod(0o600)
             options["cookiefile"] = str(cookie_file)
             yield options
+
+    @contextmanager
+    def _prepared_instagram_cookie(self) -> Iterator[Path | None]:
+        source = self.settings.INSTAGRAM_COOKIES_FILE
+        if source is None:
+            yield None
+            return
+        if not source.is_file():
+            raise MediaProcessingError("login_required", "CookieFileMissing")
+        with tempfile.TemporaryDirectory(prefix="mediadown-instagram-") as temp_dir:
+            cookie_file = Path(temp_dir) / "cookies.txt"
+            shutil.copyfile(source, cookie_file)
+            cookie_file.chmod(0o600)
+            yield cookie_file
 
     @staticmethod
     def _instagram_story_match_filter(target_shortcode: str) -> Any:
@@ -465,6 +589,32 @@ class MediaService:
         return path
 
     @staticmethod
+    def _instagram_output_files(work_dir: Path) -> tuple[DownloadedItem, ...]:
+        root = work_dir.resolve()
+        allowed = {".gif", ".jpeg", ".jpg", ".m4v", ".mov", ".mp4", ".png", ".webm", ".webp"}
+        items: list[DownloadedItem] = []
+        for candidate in sorted(work_dir.rglob("*")):
+            if not candidate.is_file() or candidate.is_symlink():
+                continue
+            path = candidate.resolve()
+            if root not in path.parents or path.suffix.lower() not in allowed:
+                continue
+            path.chmod(0o644)
+            items.append(
+                DownloadedItem(
+                    path=path,
+                    size_bytes=path.stat().st_size,
+                    kind=media_kind_for_path(path),
+                )
+            )
+        return tuple(items)
+
+    @staticmethod
+    def _is_instagram_url(url: str) -> bool:
+        host = (urlsplit(url).hostname or "").lower().rstrip(".")
+        return host in {"instagram.com", "www.instagram.com", "instagr.am", "www.instagr.am"}
+
+    @staticmethod
     def _mapped_error(message: str) -> MediaProcessingError:
         lowered = message.lower()
         mappings = (
@@ -487,8 +637,25 @@ class MediaService:
             (("geo", "country", "region"), "geo_restricted"),
             (("429", "too many requests", "rate-limit"), "rate_limited"),
             (("timed out", "timeout"), "timeout"),
-            (("file is larger", "max-filesize"), "too_large"),
-            (("unsupported url", "no video formats"), "unsupported"),
+            (
+                (
+                    "file is larger",
+                    "file size exceeds",
+                    "filesize-max",
+                    "max-filesize",
+                    "maximum filesize",
+                ),
+                "too_large",
+            ),
+            (
+                (
+                    "unsupported url",
+                    "no video formats",
+                    "no downloadable media",
+                    "no results",
+                ),
+                "unsupported",
+            ),
             (("unable to download", "network", "connection", "ssl", "handshake"), "network"),
             (("unavailable", "removed", "does not exist"), "unavailable"),
         )
@@ -496,6 +663,37 @@ class MediaService:
             if any(needle in lowered for needle in needles):
                 return MediaProcessingError(code)
         return MediaProcessingError("internal", "DownloadError")
+
+    @classmethod
+    def _mapped_instagram_error(cls, message: str) -> MediaProcessingError:
+        error = cls._mapped_error(message)
+        if error.code == "cookies_required":
+            return MediaProcessingError("login_required")
+        return error
+
+    @staticmethod
+    def _is_oversized_output(message: str) -> bool:
+        lowered = message.lower()
+        return any(
+            needle in lowered
+            for needle in (
+                "file is larger",
+                "file size exceeds",
+                "filesize-max",
+                "maximum filesize",
+            )
+        )
+
+
+def media_kind_for_path(path: Path) -> MediaKind:
+    suffix = path.suffix.lower()
+    if suffix in {".mp4", ".mov", ".m4v", ".webm", ".mkv"}:
+        return MediaKind.VIDEO
+    if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+        return MediaKind.PHOTO
+    if suffix == ".gif":
+        return MediaKind.ANIMATION
+    return MediaKind.DOCUMENT
 
 
 def platform_label(platform: Platform) -> str:

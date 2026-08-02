@@ -5,12 +5,12 @@ YouTube va Instagram mediasini Telegram orqali yetkazib beruvchi, navbat asosida
 ## Imkoniyatlar
 
 - Telegram kontakt orqali xavfsiz ro‘yxatdan o‘tish
-- YouTube video, Shorts va Instagram post, Reel, Story hamda Highlight havolalarini tekshirish
+- YouTube video, Shorts va Instagram post, Reel, Story, Highlight hamda Share havolalarini tekshirish
 - YouTube uchun video sifati hamda MP3/M4A formatini taxminiy hajmi bilan tanlash
-- Instagram post, Reel, Story va Highlight videosini tanlovsiz eng yuqori mavjud sifatda avtomatik yuklash
+- Instagram foto, video, GIF va aralash carousel tarkibini asl sifatda avtomatik yuklash
 - Lokal Telegram Bot API orqali 2 GB gacha fayl yuborish
 - Celery worker orqali parallel media yuklash
-- Telegram `file_id` keshi: bir xil media va sifat keyingi foydalanuvchiga qayta yuklanmasdan yuboriladi
+- Mos bitta video/audio uchun Telegram `file_id` keshi: keyingi so‘rov qayta yuklanmasdan yuboriladi
 - Bir xil parallel so‘rovlarni birlashtirish va media tahlili natijasini keshlash
 - Worker va lokal Bot API orasida katta faylni HTTP orqali qayta ko‘chirmaydigan umumiy volume
 - Faylni Telegram’ga yuborgach avtomatik o‘chirish
@@ -22,7 +22,7 @@ YouTube va Instagram mediasini Telegram orqali yetkazib beruvchi, navbat asosida
 
 ```text
 Telegram -> Lokal Bot API -> Bot -> PostgreSQL
-                           -> Redis -> Celery worker -> yt-dlp/Deno/FFmpeg
+                           -> Redis -> Celery worker -> yt-dlp/gallery-dl/Deno/FFmpeg
                                       |        |
                                       |        +-> videos (vaqtinchalik umumiy volume)
                                       +-> Telegram file_id keshi -> Telegram
@@ -94,7 +94,7 @@ docker build -t mediadownuzbot:test .
 
 Bir worker konteynerining parallel ishlari `WORKER_CONCURRENCY` bilan belgilanadi. Boshlang‘ich qiymat `4`. CPU, RAM, tarmoq va media sifatiga qarab worker replikalarini ko‘paytirish mumkin. Har bir foydalanuvchi uchun bir vaqtda bitta faol vazifa qabul qilinadi; bu botning bitta foydalanuvchi tomonidan band qilinishini cheklaydi.
 
-Birinchi so‘rovda manbadan yuklash, zarur bo‘lsa FFmpeg birlashtirish va Telegram’ga upload qilish vaqti baribir tarmoq tezligiga bog‘liq. Xuddi shu URL, format va sifat keyin so‘ralsa bot Telegram `file_id` orqali odatda soniyalar ichida yuboradi. Birinchi foydalanuvchi o‘z chatidagi xabarni o‘chirishi keshni bekor qilmaydi. Bir xil media bir vaqtda bir nechta foydalanuvchi tomonidan so‘ralsa, faqat bittasi yuklaydi; qolganlari tayyor `file_id`ni kutadi.
+Birinchi so‘rovda manbadan yuklash, zarur bo‘lsa FFmpeg birlashtirish va Telegram’ga upload qilish vaqti baribir tarmoq tezligiga bog‘liq. Mos bitta video yoki audio xuddi shu URL, format va sifat bilan keyin so‘ralsa bot Telegram `file_id` orqali odatda soniyalar ichida yuboradi. Birinchi foydalanuvchi o‘z chatidagi xabarni o‘chirishi keshni bekor qilmaydi. Carousel va ko‘p faylli postlar Telegram’da bir nechta `file_id` talab qilgani uchun hozircha manbadan qayta olinadi. Bir xil media bir vaqtda bir nechta foydalanuvchi tomonidan so‘ralsa, faqat bittasi yuklaydi; qolganlari natijani kutadi.
 
 ## Hujjatlar
 
@@ -106,4 +106,4 @@ Birinchi so‘rovda manbadan yuklash, zarur bo‘lsa FFmpeg birlashtirish va Tel
 
 ## Muhim cheklovlar
 
-YouTube va Instagram extractor qoidalarini vaqti-vaqti bilan o‘zgartiradi. `yt-dlp` yangilanishlarini Dependabot orqali muntazam qabul qilish kerak. YouTube sifati yonidagi hajm manba bergan oqim hajmi yoki bitrate’dan hisoblangan taxminiy qiymat; yakuniy FFmpeg fayli biroz farq qilishi mumkin. Instagram Story va Highlight faqat hali mavjud hamda bot ko‘ra oladigan holatda yuklanadi; yopiq profil yoki login talab qiladigan media uchun workerga secret mount orqali cookie sessiyasi berilishi kerak. Shaxsiy, muddati tugagan, geo-cheklangan yoki 2 GB dan katta media yuborilmasligi mumkin. Foydalanuvchi yuklayotgan kontentga nisbatan mualliflik huquqi va platforma shartlariga rioya qilishi shart.
+YouTube va Instagram extractor qoidalarini vaqti-vaqti bilan o‘zgartiradi. `yt-dlp` va `gallery-dl` yangilanishlarini Dependabot orqali muntazam qabul qilish kerak. YouTube sifati yonidagi hajm manba bergan oqim hajmi yoki bitrate’dan hisoblangan taxminiy qiymat; yakuniy FFmpeg fayli biroz farq qilishi mumkin. Instagram Story va Highlight faqat hali mavjud hamda bot ko‘ra oladigan holatda yuklanadi; yopiq profil yoki login talab qiladigan media uchun workerga secret mount orqali Instagram cookie sessiyasi berilishi kerak. Shaxsiy, muddati tugagan, geo-cheklangan yoki har bir fayli 2 GB dan katta media yuborilmasligi mumkin. Foydalanuvchi yuklayotgan kontentga nisbatan mualliflik huquqi va platforma shartlariga rioya qilishi shart.

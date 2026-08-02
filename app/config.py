@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     MEDIA_DEDUP_RETRY_SECONDS: int = Field(default=3, ge=1, le=30)
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     YTDLP_COOKIES_FILE: Path | None = None
+    INSTAGRAM_COOKIES_FILE: Path | None = None
 
     @field_validator("ADMIN_BASE_URL", "TELEGRAM_API_BASE_URL")
     @classmethod
@@ -47,7 +48,7 @@ class Settings(BaseSettings):
             raise ValueError("URL http:// yoki https:// bilan boshlanishi kerak")
         return normalized
 
-    @field_validator("YTDLP_COOKIES_FILE", mode="before")
+    @field_validator("YTDLP_COOKIES_FILE", "INSTAGRAM_COOKIES_FILE", mode="before")
     @classmethod
     def empty_path_to_none(cls, value: object) -> object:
         return None if value == "" else value

@@ -35,7 +35,7 @@ docker compose up -d --scale worker=2
 
 Bir hostda barcha workerlar bir xil `videos` bind mountdan foydalanadi, lekin har bir task UUID katalogida izolyatsiyalangan. Bir nechta EC2 instance ishlatilsa har worker o‘z lokal vaqtinchalik diskidan foydalanishi mumkin.
 
-Bir xil URL, format va sifat parallel so‘ralsa Redis lock faqat bitta workerga manbadan yuklashga ruxsat beradi. Qolgan vazifalar qisqa intervalda keshni qayta tekshiradi va tayyor bo‘lgach Telegram `file_id` bilan yuboradi. `file_id` Bot tokeniga bog‘liq; token almashtirilsa eski kesh birinchi xatoda avtomatik bekor qilinib media qayta yuklanadi.
+Bir xil URL, format va sifat parallel so‘ralsa Redis lock faqat bitta workerga manbadan yuklashga ruxsat beradi. Mos bitta video/audio so‘rovi tayyor bo‘lgach qolgan vazifalar Telegram `file_id` bilan yuboradi; ko‘p faylli Instagram carousel esa lock natijasidan keyin manbadan qayta olinadi. `file_id` Bot tokeniga bog‘liq; token almashtirilsa eski kesh birinchi xatoda avtomatik bekor qilinib media qayta yuklanadi.
 
 2 GB fayllar uchun disk hajmini parallel tasklar soniga qarab hisoblang. Worker media oqimlari va lokal Bot API vaqtinchalik nusxasi bir paytda mavjud bo‘lishi mumkin; `WORKER_CONCURRENCY=4` uchun kamida 20 GB bo‘sh operatsion zaxira qoldiring. Disk 80% ga yetganda ogohlantirish qo‘ying.
 
@@ -57,7 +57,7 @@ docker compose up -d --remove-orphans
 docker image prune -f
 ```
 
-`yt-dlp` tez-tez o‘zgaradigan tashqi platformalarga bog‘liq. Dependabot pull requestlarini CI’dan o‘tkazib muntazam deploy qilish kerak.
+`yt-dlp` va `gallery-dl` tez-tez o‘zgaradigan tashqi platformalarga bog‘liq. Dependabot pull requestlarini CI’dan o‘tkazib muntazam deploy qilish kerak.
 
 ## Instagram TLS muammosi
 

@@ -1,5 +1,7 @@
 import base64
 import binascii
+import re
+import unicodedata
 from dataclasses import dataclass
 from hashlib import sha256
 from urllib.parse import SplitResult, parse_qs, urlencode, urlsplit, urlunsplit
@@ -24,12 +26,29 @@ YOUTUBE_HOSTS = {
     "music.youtube.com",
     "youtu.be",
 }
-INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com"}
+INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com", "instagr.am", "www.instagr.am"}
 INSTAGRAM_ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+SUPPORTED_HOST_PATTERN = (
+    r"(?:www\.)?(?:youtube\.com|youtu\.be|instagram\.com|instagr\.am)"
+    r"|m\.youtube\.com|music\.youtube\.com"
+)
+URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 
 
 def parse_media_url(raw_url: str) -> MediaUrl:
-    value = raw_url.strip()
+    value = _clean_message_text(raw_url)
+    last_error: InvalidMediaUrlError | None = None
+    for candidate in _url_candidates(value):
+        try:
+            return _parse_url_candidate(candidate)
+        except InvalidMediaUrlError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise InvalidMediaUrlError("HTTP yoki HTTPS havola topilmadi")
+
+
+def _parse_url_candidate(value: str) -> MediaUrl:
     if len(value) > 2048:
         raise InvalidMediaUrlError("Havola juda uzun")
     parts = urlsplit(value)
@@ -47,6 +66,22 @@ def parse_media_url(raw_url: str) -> MediaUrl:
     raise InvalidMediaUrlError("Faqat YouTube va Instagram havolalari qabul qilinadi")
 
 
+def _clean_message_text(value: str) -> str:
+    cleaned = "".join(character for character in value if unicodedata.category(character) != "Cf")
+    return re.sub(
+        rf"(?i)(https?://(?:{SUPPORTED_HOST_PATTERN}))[ \t]*[\r\n]+[ \t]*(?=/)",
+        r"\1",
+        cleaned.strip(),
+    )
+
+
+def _url_candidates(value: str) -> list[str]:
+    matches = URL_PATTERN.findall(value)
+    if not matches and value:
+        matches = [value]
+    return [match.rstrip(".,;:!?)]}") for match in matches]
+
+
 def media_source_key(normalized_url: str) -> str:
     return sha256(normalized_url.encode("utf-8")).hexdigest()
 
@@ -54,7 +89,9 @@ def media_source_key(normalized_url: str) -> str:
 def instagram_story_target_shortcode(url: str) -> str | None:
     parts = urlsplit(url)
     path_parts = [part for part in parts.path.split("/") if part]
-    if len(path_parts) != 3 or path_parts[:2] != ["stories", "highlights"]:
+    is_shared_story = len(path_parts) == 2 and path_parts[0] == "s"
+    is_highlight_story = len(path_parts) == 3 and path_parts[:2] == ["stories", "highlights"]
+    if not is_shared_story and not is_highlight_story:
         return None
     media_id = _instagram_story_media_id(parse_qs(parts.query, keep_blank_values=False))
     if media_id is None:
@@ -90,6 +127,8 @@ def _normalize_instagram(parts: SplitResult) -> str:
         return _normalize_instagram_shared_story(path_parts[1], parts)
     if len(path_parts) in {2, 3} and path_parts[0] == "stories":
         return _normalize_instagram_story(path_parts, parts)
+    if path_parts and path_parts[0] == "share":
+        return _normalize_instagram_share(path_parts)
     if len(path_parts) < 2 or path_parts[0] not in {"p", "reel", "reels", "tv"}:
         raise InvalidMediaUrlError("Instagram media havolasi noto'g'ri")
     shortcode = path_parts[1]
@@ -97,6 +136,21 @@ def _normalize_instagram(parts: SplitResult) -> str:
         raise InvalidMediaUrlError("Instagram media identifikatori noto'g'ri")
     media_type = "reel" if path_parts[0] == "reels" else path_parts[0]
     return urlunsplit(("https", "www.instagram.com", f"/{media_type}/{shortcode}/", "", ""))
+
+
+def _normalize_instagram_share(path_parts: list[str]) -> str:
+    if len(path_parts) == 2:
+        token = path_parts[1]
+        normalized_parts = ["share", token]
+    elif len(path_parts) == 3 and path_parts[1] in {"p", "reel", "reels", "tv"}:
+        token = path_parts[2]
+        normalized_parts = ["share", path_parts[1], token]
+    else:
+        raise InvalidMediaUrlError("Instagram ulashish havolasi noto'g'ri")
+    if len(token) > 256 or not all(character.isalnum() or character in "_-" for character in token):
+        raise InvalidMediaUrlError("Instagram media identifikatori noto'g'ri")
+    path = "/" + "/".join(normalized_parts) + "/"
+    return urlunsplit(("https", "www.instagram.com", path, "", ""))
 
 
 def _normalize_instagram_shared_story(token: str, parts: SplitResult) -> str:
@@ -112,7 +166,7 @@ def _normalize_instagram_shared_story(token: str, parts: SplitResult) -> str:
         raise InvalidMediaUrlError("Instagram highlight identifikatori noto'g'ri")
     media_id = _required_instagram_story_media_id(parts)
     query = urlencode({"story_media_id": media_id})
-    path = f"/stories/highlights/{highlight_id}/"
+    path = f"/s/{token}"
     return urlunsplit(("https", "www.instagram.com", path, query, ""))
 
 
@@ -124,7 +178,11 @@ def _normalize_instagram_story(path_parts: list[str], parts: SplitResult) -> str
         if not _valid_numeric_id(story_id):
             raise InvalidMediaUrlError("Instagram highlight identifikatori noto'g'ri")
         media_id = _instagram_story_media_id(parse_qs(parts.query, keep_blank_values=False))
-        query = urlencode({"story_media_id": media_id}) if media_id else ""
+        if media_id:
+            token = base64.urlsafe_b64encode(f"highlight:{story_id}".encode()).decode().rstrip("=")
+            query = urlencode({"story_media_id": media_id})
+            return urlunsplit(("https", "www.instagram.com", f"/s/{token}", query, ""))
+        query = ""
     else:
         if not _valid_instagram_username(owner) or not _valid_numeric_id(story_id):
             raise InvalidMediaUrlError("Instagram story identifikatori noto'g'ri")

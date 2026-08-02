@@ -1,7 +1,7 @@
 WELCOME = (
     "👋 <b>Xush kelibsiz!</b>\n\n"
-    "YouTube havolasida format va sifatni tanlaysiz. Instagram post, Reel, Story va Highlight "
-    "videosi esa avtomatik ravishda eng yuqori mavjud sifatda yuboriladi."
+    "YouTube havolasida format va sifatni tanlaysiz. Instagram post, Reel, Story, Highlight "
+    "hamda carousel ichidagi rasm, video va GIFlar asl sifatida avtomatik yuboriladi."
 )
 
 REGISTRATION_REQUIRED = (
@@ -30,10 +30,11 @@ REGISTRATION_SUCCESS = (
 
 URL_INVALID = (
     "❌ <b>Havola qabul qilinmadi</b>\n\n"
-    "Faqat YouTube video/Shorts yoki Instagram post, Reel, Story, "
-    "Highlight havolasini yuboring.\n\n"
+    "Faqat YouTube video/Shorts yoki Instagram media havolasini yuboring. "
+    "Post, Reel, Story, Highlight, rasm, video, GIF va carousel qo‘llab-quvvatlanadi.\n\n"
     "<b>Misollar:</b>\n"
     "• https://youtu.be/VIDEO_ID\n"
+    "• https://www.instagram.com/p/SHORTCODE/\n"
     "• https://www.instagram.com/reel/SHORTCODE/\n"
     "• https://www.instagram.com/stories/USERNAME/STORY_ID/"
 )
@@ -43,9 +44,7 @@ JOB_BUSY = (
     "Jarayon tugashini kuting yoki joriy vazifani bekor qiling."
 )
 
-ANALYZING = (
-    "🔎 <b>Havola tekshirilmoqda...</b>\n\nVideo ma’lumotlari va mavjud sifatlar aniqlanmoqda."
-)
+ANALYZING = "🔎 <b>Havola tekshirilmoqda...</b>\n\nMedia turi va mavjud formatlar aniqlanmoqda."
 
 STALE_ACTION = (
     "⌛ <b>Bu tugmaning amal qilish muddati tugagan.</b>\n\n"
@@ -80,7 +79,7 @@ HELP = (
     "📚 <b>Botdan foydalanish</b>\n\n"
     "1. YouTube yoki Instagram havolasini yuboring.\n"
     "2. YouTube uchun video/audio va sifatni tanlang.\n"
-    "3. Instagram post, Reel, Story yoki Highlight videosi avtomatik yuklanadi.\n"
+    "3. Instagram post, Reel, Story, Highlight yoki carousel mediasi avtomatik yuklanadi.\n"
     "4. Tayyor faylni Telegram orqali qabul qiling.\n\n"
     "Bir vaqtda bitta faol vazifa qabul qilinadi."
 )
@@ -89,7 +88,7 @@ ERROR_MESSAGES = {
     "unsupported": "Bu havoladagi media qo‘llab-quvvatlanmaydi.",
     "unavailable": "Media o‘chirilgan yoki hozirda mavjud emas.",
     "private": "Yopiq yoki shaxsiy media yuklab olinmaydi.",
-    "login_required": "Bu media ko‘rish uchun tizimga kirishni talab qiladi.",
+    "login_required": "Bu media yopiq yoki uni ko‘rish uchun amaldagi Instagram sessiyasi kerak.",
     "geo_restricted": "Media hududiy cheklov sababli yuklab olinmadi.",
     "rate_limited": "Manba vaqtincha juda ko‘p so‘rov qabul qildi. Keyinroq urinib ko‘ring.",
     "too_large": "Fayl hajmi Telegram orqali yuborish uchun ruxsat etilgan 2 GB limitdan katta.",
@@ -100,7 +99,7 @@ ERROR_MESSAGES = {
         "Administrator tasdiqlash ma’lumotini yangilagach qayta urinib ko‘ring."
     ),
     "network": "Tarmoq bilan vaqtinchalik muammo yuz berdi. Qayta urinib ko‘ring.",
-    "invalid_media": "Havolada yuklab olinadigan video yoki audio topilmadi.",
+    "invalid_media": "Havolada yuklab olinadigan rasm, video, GIF yoki audio topilmadi.",
     "internal": "Kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko‘ring.",
 }
 

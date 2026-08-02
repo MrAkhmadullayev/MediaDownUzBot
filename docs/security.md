@@ -9,9 +9,9 @@
 
 ## URL va media himoyasi
 
-Faqat `youtube.com`, `youtu.be` va `instagram.com` ning aniq hostlari qabul qilinadi. URL credential, noodatiy port, subdomain aldovi, boshqa protocol va noma’lum pathlar rad etiladi. Instagram ulashish tokeni faqat `highlight:<raqam>` formatida Base64URL orqali dekodlanadi. Highlight tarkibidan URL’dagi `story_media_id`ga mos aynan bitta media yozuvi qayta ishlanadi; qolgan playlist elementlari yuklanmaydi.
+Faqat `youtube.com`, `youtu.be`, `instagram.com` va `instagr.am` ning aniq hostlari qabul qilinadi. URL credential, noodatiy port, subdomain aldovi, boshqa protocol va noma’lum pathlar rad etiladi. Instagram post, Reel, TV, Story, Highlight va Share pathlari allowlist asosida tekshiriladi. Ulashish tokeni va `story_media_id` xavfsiz formatda normalizatsiya qilinadi; URL tashqi extractor’ga faqat shu tekshiruvdan keyin uzatiladi.
 
-Har task UUID katalogida ishlaydi. Path resolve tekshiruvi katalogdan chiqishni bloklaydi. Symlink fayllar yuborilmaydi. Fayl hajmi, video balandligi va task vaqti cheklangan.
+Har task UUID katalogida ishlaydi. Path resolve tekshiruvi katalogdan chiqishni bloklaydi. Symlink va qo‘llab-quvvatlanmaydigan fayl kengaytmalari yuborilmaydi. Har bir fayl hajmi, YouTube video balandligi va task vaqti cheklangan.
 
 ## Admin himoyasi
 

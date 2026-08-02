@@ -4,11 +4,18 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from time import monotonic
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from aiogram.types import FSInputFile, InputFile, Message
+from aiogram.types import (
+    FSInputFile,
+    InputFile,
+    InputMediaPhoto,
+    InputMediaVideo,
+    Message,
+)
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,8 +35,10 @@ from app.services.locks import (
     release_media_download,
 )
 from app.services.media import (
+    DownloadedItem,
     DownloadedMedia,
     MediaInfo,
+    MediaKind,
     MediaProcessingError,
     MediaService,
     platform_label,
@@ -183,8 +192,8 @@ async def analyze_job(job_id: uuid.UUID) -> None:
             text = (
                 "✅ <b>Instagram mediasi topildi</b>\n\n"
                 f"🎞 <b>Nomi:</b> {html.escape(info.title[:180])}\n"
-                f"⏱ <b>Davomiyligi:</b> {duration}\n"
-                f"⚙️ <b>Sifat:</b> {selected_quality(*automatic_selection)}\n\n"
+                "🖼 <b>Tarkib:</b> rasm, video, GIF yoki carousel\n"
+                "⚙️ <b>Sifat:</b> asl sifat\n\n"
                 "🕐 <b>Vazifa navbatga qo‘shildi.</b>"
             )
             new_message_id = await edit_or_send(bot, user_id, status_message_id, text)
@@ -333,13 +342,11 @@ async def download_job(job_id: uuid.UUID) -> bool:
         await edit_or_send(bot, context.user_id, context.status_message_id, UPLOADING)
         upload_started = monotonic()
         try:
-            message = await send_media(
+            messages = await send_downloaded_media(
                 bot,
                 settings,
                 context,
-                upload_input(downloaded, settings),
-                downloaded.title,
-                downloaded.duration_seconds,
+                downloaded,
             )
         except TelegramAPIError as exc:
             raise MediaProcessingError("upload_failed", type(exc).__name__) from None
@@ -350,7 +357,7 @@ async def download_job(job_id: uuid.UUID) -> bool:
             upload_started,
             size_bytes=downloaded.size_bytes,
         )
-        completed = await save_delivery_result(database, job_id, context, downloaded, message)
+        completed = await save_delivery_result(database, job_id, context, downloaded, messages)
         if completed:
             await show_completed(bot, context)
         await release_active_job(redis, context.user_id, job_id)
@@ -569,9 +576,28 @@ async def finish_success(
 
 
 def upload_input(downloaded: DownloadedMedia, settings: Settings) -> str | InputFile:
+    return upload_path(downloaded.path, settings)
+
+
+def upload_path(path: Path, settings: Settings) -> str | InputFile:
+    media_path = path
     if settings.TELEGRAM_LOCAL_MODE:
-        return downloaded.path.resolve().as_uri()
-    return FSInputFile(downloaded.path)
+        return media_path.resolve().as_uri()
+    return FSInputFile(media_path)
+
+
+def media_caption(context: DownloadContext, title: str) -> str:
+    quality = (
+        "Asl sifat"
+        if context.platform == Platform.INSTAGRAM
+        else selected_quality(context.media_type, context.quality)
+    )
+    return (
+        "✅ <b>Tayyor!</b>\n\n"
+        f"🎞 <b>Nomi:</b> {html.escape(title[:180])}\n"
+        f"🌐 <b>Manba:</b> {platform_label(context.platform)}\n"
+        f"⚙️ <b>Sifat:</b> {quality}"
+    )
 
 
 async def send_media(
@@ -582,12 +608,7 @@ async def send_media(
     title: str,
     duration_seconds: int | None,
 ) -> Message:
-    caption = (
-        "✅ <b>Tayyor!</b>\n\n"
-        f"🎞 <b>Nomi:</b> {html.escape(title[:180])}\n"
-        f"🌐 <b>Manba:</b> {platform_label(context.platform)}\n"
-        f"⚙️ <b>Sifat:</b> {selected_quality(context.media_type, context.quality)}"
-    )
+    caption = media_caption(context, title)
     if context.media_type == MediaType.VIDEO:
         return await bot.send_video(
             chat_id=context.user_id,
@@ -607,14 +628,185 @@ async def send_media(
     )
 
 
+async def send_downloaded_media(
+    bot: Bot,
+    settings: Settings,
+    context: DownloadContext,
+    downloaded: DownloadedMedia,
+) -> list[Message]:
+    items = downloaded.media_items
+    if len(items) == 1 and context.media_type == MediaType.AUDIO:
+        return [
+            await send_media(
+                bot,
+                settings,
+                context,
+                upload_path(items[0].path, settings),
+                downloaded.title,
+                downloaded.duration_seconds,
+            )
+        ]
+
+    messages: list[Message] = []
+    caption = media_caption(context, downloaded.title)
+    pending_album: list[DownloadedItem] = []
+    caption_available = True
+
+    async def flush_album() -> None:
+        nonlocal caption_available
+        if not pending_album:
+            return
+        if len(pending_album) == 1:
+            item = pending_album.pop()
+            message = await send_single_item(
+                bot,
+                settings,
+                context.user_id,
+                item,
+                caption if caption_available else None,
+                downloaded.duration_seconds,
+            )
+            messages.append(message)
+        else:
+            album = []
+            for index, item in enumerate(pending_album):
+                item_caption = caption if caption_available and index == 0 else None
+                media = upload_path(item.path, settings)
+                if item.kind == MediaKind.PHOTO:
+                    album.append(
+                        InputMediaPhoto(
+                            media=media,
+                            caption=item_caption,
+                            parse_mode="HTML" if item_caption else None,
+                        )
+                    )
+                else:
+                    album.append(
+                        InputMediaVideo(
+                            media=media,
+                            caption=item_caption,
+                            parse_mode="HTML" if item_caption else None,
+                            supports_streaming=True,
+                        )
+                    )
+            try:
+                sent_messages = await bot.send_media_group(
+                    chat_id=context.user_id,
+                    media=album,
+                    request_timeout=settings.TELEGRAM_UPLOAD_TIMEOUT_SECONDS,
+                )
+            except TelegramBadRequest:
+                sent_messages = []
+                for index, item in enumerate(pending_album):
+                    sent_messages.append(
+                        await send_single_item(
+                            bot,
+                            settings,
+                            context.user_id,
+                            item,
+                            caption if caption_available and index == 0 else None,
+                            downloaded.duration_seconds,
+                        )
+                    )
+            messages.extend(sent_messages)
+            pending_album.clear()
+        caption_available = False
+
+    for item in items:
+        if item.kind in {MediaKind.PHOTO, MediaKind.VIDEO}:
+            pending_album.append(item)
+            if len(pending_album) == 10:
+                await flush_album()
+            continue
+        await flush_album()
+        messages.append(
+            await send_single_item(
+                bot,
+                settings,
+                context.user_id,
+                item,
+                caption if caption_available else None,
+                downloaded.duration_seconds,
+            )
+        )
+        caption_available = False
+    await flush_album()
+    return messages
+
+
+async def send_single_item(
+    bot: Bot,
+    settings: Settings,
+    chat_id: int,
+    item: DownloadedItem,
+    caption: str | None,
+    duration_seconds: int | None,
+) -> Message:
+    media = upload_path(item.path, settings)
+    timeout = settings.TELEGRAM_UPLOAD_TIMEOUT_SECONDS
+    if item.kind == MediaKind.VIDEO:
+        try:
+            return await bot.send_video(
+                chat_id=chat_id,
+                video=media,
+                caption=caption,
+                duration=duration_seconds,
+                supports_streaming=True,
+                request_timeout=timeout,
+            )
+        except TelegramBadRequest:
+            return await bot.send_document(
+                chat_id=chat_id,
+                document=upload_path(item.path, settings),
+                caption=caption,
+                request_timeout=timeout,
+            )
+    if item.kind == MediaKind.PHOTO:
+        try:
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=media,
+                caption=caption,
+                request_timeout=timeout,
+            )
+        except TelegramBadRequest:
+            return await bot.send_document(
+                chat_id=chat_id,
+                document=upload_path(item.path, settings),
+                caption=caption,
+                request_timeout=timeout,
+            )
+    if item.kind == MediaKind.ANIMATION:
+        try:
+            return await bot.send_animation(
+                chat_id=chat_id,
+                animation=media,
+                caption=caption,
+                request_timeout=timeout,
+            )
+        except TelegramBadRequest:
+            pass
+    return await bot.send_document(
+        chat_id=chat_id,
+        document=upload_path(item.path, settings),
+        caption=caption,
+        request_timeout=timeout,
+    )
+
+
 async def save_delivery_result(
     database: Database,
     job_id: uuid.UUID,
     context: DownloadContext,
     downloaded: DownloadedMedia,
-    message: Message,
+    messages: list[Message],
 ) -> bool:
-    telegram_media = message.video if context.media_type == MediaType.VIDEO else message.audio
+    telegram_media = None
+    if len(messages) == 1 and len(downloaded.media_items) == 1:
+        if context.media_type == MediaType.AUDIO:
+            telegram_media = messages[0].audio
+        elif downloaded.media_items[0].kind == MediaKind.VIDEO:
+            telegram_media = messages[0].video
     async with database.session_factory() as session:
         if telegram_media:
             await MediaCacheRepository.upsert_file(

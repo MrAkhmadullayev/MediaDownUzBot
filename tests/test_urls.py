@@ -49,7 +49,7 @@ def test_instagram_shared_highlight_story_is_normalized() -> None:
 
     assert result.platform == Platform.INSTAGRAM
     assert result.normalized == (
-        "https://www.instagram.com/stories/highlights/18013254650887296/"
+        "https://www.instagram.com/s/aGlnaGxpZ2h0OjE4MDEzMjU0NjUwODg3Mjk2"
         "?story_media_id=3912338590873067115"
     )
     assert instagram_story_target_shortcode(result.normalized) == "DZLazhOCp5r"
@@ -65,12 +65,45 @@ def test_instagram_shared_highlight_story_is_normalized() -> None:
         (
             "https://instagram.com/stories/highlights/18013254650887296/"
             "?story_media_id=3912338590873067115_10449377142",
-            "https://www.instagram.com/stories/highlights/18013254650887296/"
+            "https://www.instagram.com/s/aGlnaGxpZ2h0OjE4MDEzMjU0NjUwODg3Mjk2"
             "?story_media_id=3912338590873067115",
         ),
     ],
 )
 def test_instagram_story_urls_are_normalized(source: str, expected: str) -> None:
+    assert parse_media_url(source).normalized == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "https://www.instagram.com/p/DOdWFmdCoKQ/?igsh=MXV6ODAzNzFtdGY2ZA==",
+        "Mana post: https://www.instagram.com/p/DOdWFmdCoKQ/?igsh=ignored",
+        "https://www.instagram.com\n/p/DOdWFmdCoKQ/?igsh=ignored",
+        "https://www.insta\u200bgram.com/p/DOdWFmdCoKQ/?igsh=ignored",
+    ],
+)
+def test_instagram_post_is_extracted_from_telegram_message(source: str) -> None:
+    result = parse_media_url(source)
+
+    assert result.platform == Platform.INSTAGRAM
+    assert result.normalized == "https://www.instagram.com/p/DOdWFmdCoKQ/"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "https://www.instagram.com/share/BAAbCdEf12/",
+            "https://www.instagram.com/share/BAAbCdEf12/",
+        ),
+        (
+            "https://www.instagram.com/share/reel/BAAbCdEf12/?igsh=ignored",
+            "https://www.instagram.com/share/reel/BAAbCdEf12/",
+        ),
+    ],
+)
+def test_instagram_share_urls_are_normalized(source: str, expected: str) -> None:
     assert parse_media_url(source).normalized == expected
 
 
@@ -83,6 +116,7 @@ def test_instagram_story_urls_are_normalized(source: str, expected: str) -> None
         "https://user:pass@youtube.com/watch?v=test",
         "https://youtube.com:8080/watch?v=test",
         "https://instagram.com/accounts/login/",
+        "https://instagram.com/example.profile/",
         "https://instagram.com/s/not_base64?story_media_id=3912338590873067115",
         "https://instagram.com/s/aGlnaGxpZ2h0OjE4MDEzMjU0NjUwODg3Mjk2",
         "https://instagram.com/stories/test.user/not-a-number/",
