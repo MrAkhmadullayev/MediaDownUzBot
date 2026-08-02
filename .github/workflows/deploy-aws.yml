@@ -33,7 +33,7 @@ jobs:
           else
             echo "sha=$DISPATCH_SHA" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.source.outputs.sha }}
       - uses: aws-actions/configure-aws-credentials@v4
