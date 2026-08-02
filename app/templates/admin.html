@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>MediaDownUzBot · Admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='admin.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Boshqaruv markazi</p>
+      <h1>MediaDownUzBot</h1>
+    </div>
+    <form method="post" action="/admin/logout">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="button" type="submit">Xavfsiz chiqish</button>
+    </form>
+  </header>
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Jonli ko‘rsatkichlar</p>
+        <h2>Tizim holati</h2>
+        <p>Foydalanuvchilar va media vazifalarining umumiy statistikasi.</p>
+      </div>
+      <span class="system-status"><i></i> Tizim ishlamoqda</span>
+    </section>
+    <section class="stats" aria-label="Umumiy statistika">
+      <article><span>Foydalanuvchilar</span><strong>{{ stats.users }}</strong></article>
+      <article><span>Jami vazifalar</span><strong>{{ stats.jobs }}</strong></article>
+      <article class="success"><span>Muvaffaqiyatli</span><strong>{{ stats.success }}</strong></article>
+      <article class="danger"><span>Xatoliklar</span><strong>{{ stats.errors }}</strong></article>
+      <article><span>Faol jarayonlar</span><strong>{{ stats.active }}</strong></article>
+      <article><span>Bekor qilingan</span><strong>{{ stats.cancelled }}</strong></article>
+    </section>
+    <section class="panel">
+      <div class="panel-heading">
+        <div><p class="eyebrow">Oxirgi 100 ta</p><h2>Foydalanuvchilar</h2></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Foydalanuvchi</th><th>Telegram ID</th><th>Telefon</th><th>Jami</th><th>Success</th><th>Error</th><th>Ro‘yxatdan o‘tgan</th></tr></thead>
+          <tbody>
+          {% for user in users %}
+            <tr>
+              <td><strong>{{ user.first_name }} {{ user.last_name or '' }}</strong><small>{% if user.username %}@{{ user.username }}{% else %}username yo‘q{% endif %}</small></td>
+              <td><code>{{ user.telegram_id }}</code></td>
+              <td>•••• {{ user.phone_last4 or '—' }}</td>
+              <td>{{ user.jobs or 0 }}</td>
+              <td class="text-success">{{ user.success or 0 }}</td>
+              <td class="text-danger">{{ user.errors or 0 }}</td>
+              <td>{{ user.registered_at.strftime('%d.%m.%Y %H:%M') if user.registered_at else '—' }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="empty">Hozircha foydalanuvchilar yo‘q.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-heading">
+        <div><p class="eyebrow">Oxirgi 100 ta</p><h2>Media vazifalari</h2></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Vaqt</th><th>User ID</th><th>Platforma</th><th>Format</th><th>Sifat</th><th>Holat</th><th>Xato kodi</th></tr></thead>
+          <tbody>
+          {% for job in jobs %}
+            <tr>
+              <td>{{ job.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+              <td><code>{{ job.user_id }}</code></td>
+              <td>{{ job.platform.value|capitalize }}</td>
+              <td>{{ job.media_type.value if job.media_type else '—' }}</td>
+              <td>{{ job.quality or '—' }}</td>
+              <td><span class="status status-{{ job.status.value }}">{{ status_labels[job.status] }}</span></td>
+              <td>{{ job.error_code or '—' }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="empty">Hozircha media vazifalari yo‘q.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

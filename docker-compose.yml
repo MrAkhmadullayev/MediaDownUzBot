@@ -1,0 +1,152 @@
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - .env
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:10.2
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_LOCAL: "1"
+      TELEGRAM_HTTP_IP_ADDRESS: 0.0.0.0
+      TELEGRAM_VERBOSITY: "1"
+    volumes:
+      - telegram_bot_api_data:/var/lib/telegram-bot-api
+      - telegram_bot_api_temp:/tmp/telegram-bot-api
+      - ./videos:/app/videos:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:8.2.1-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  admin:
+    <<: *app
+    command: ["uvicorn", "app.admin.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--no-access-log", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  bot:
+    <<: *app
+    command: ["python", "-m", "app.bot.main"]
+    depends_on:
+      telegram-bot-api:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--queues=media", "--concurrency=${WORKER_CONCURRENCY:-4}", "--without-gossip", "--without-mingle"]
+    dns:
+      - ${WORKER_DNS_PRIMARY:-1.1.1.1}
+      - ${WORKER_DNS_SECONDARY:-8.8.8.8}
+    volumes:
+      - ./videos:/app/videos
+    depends_on:
+      telegram-bot-api:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    <<: *app
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    volumes:
+      - ./videos:/app/videos
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.29.3-alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/cache/nginx:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      admin:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  telegram_bot_api_data:
+  telegram_bot_api_temp:
+  postgres_data:
+  redis_data:

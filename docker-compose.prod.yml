@@ -1,0 +1,16 @@
+x-production-image: &production-image
+  image: ${APP_IMAGE}
+  build: null
+  pull_policy: always
+
+services:
+  migrate:
+    <<: *production-image
+  admin:
+    <<: *production-image
+  bot:
+    <<: *production-image
+  worker:
+    <<: *production-image
+  scheduler:
+    <<: *production-image

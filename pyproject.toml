@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling==1.28.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mediadownuzbot"
+version = "1.0.0"
+description = "YouTube va Instagram media yuklovchi Telegram bot"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "aiogram==3.30.0",
+  "alembic==1.18.5",
+  "asyncpg==0.31.0",
+  "celery[redis]==5.6.3",
+  "cryptography==50.0.0",
+  "fastapi==0.141.1",
+  "greenlet==3.5.4",
+  "jinja2==3.1.6",
+  "phonenumbers==9.0.36",
+  "psycopg[binary]==3.3.4",
+  "pydantic==2.13.4",
+  "pydantic-settings==2.14.2",
+  "python-multipart==0.0.32",
+  "redis==6.4.0",
+  "sqlalchemy==2.0.51",
+  "uvicorn[standard]==0.52.1",
+  "yt-dlp[default]==2026.7.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "aiosqlite==0.22.1",
+  "bandit==1.9.4",
+  "httpx==0.28.1",
+  "pip-audit==2.10.1",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "pytest-cov==7.0.0",
+  "ruff==0.16.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q --strict-markers --disable-warnings --cov=app --cov-report=term-missing"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [".venv", "migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "S", "RUF"]
+ignore = ["RUF001", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]
+"app/admin/*.py" = ["B008"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = ["B404", "B603"]
