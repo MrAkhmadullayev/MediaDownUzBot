@@ -12,6 +12,8 @@ Loyiha GitHub Actions, Amazon ECR, EC2, SSM va Docker Compose orqali deploy qili
 6. Production `.env` faylini shu katalogga serverning o‘zida yarating.
 7. DNS’ni instance yoki Application Load Balancer’ga ulang va TLS’ni ALB/ACM yoki alohida reverse proxyda yakunlang.
 
+Ushbu loyiha uchun `deploy/Caddyfile` hostdagi Caddy reverse proxy konfiguratsiyasini saqlaydi. Compose Nginx porti faqat `127.0.0.1:8080` manzilida tinglaydi; internetga faqat Caddy orqali `80/443` portlari ochiladi.
+
 EC2 diskida `videos` va lokal Bot API kataloglari faqat vaqtinchalik media uchun ishlatiladi. 2 GB fayllar va to‘rtta parallel worker uchun kamida 100 GB SSD tavsiya qilinadi. PostgreSQL’ni katta production tizimida RDS, Redis’ni ElastiCache bilan almashtirish tavsiya qilinadi. Bunda `.env` dagi ikki connection URL o‘zgartiriladi va Compose’dagi lokal database xizmatlari alohida profile yoki override orqali olib tashlanadi.
 
 ## GitHub environment va secretlar
