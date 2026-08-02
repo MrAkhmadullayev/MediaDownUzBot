@@ -1,7 +1,9 @@
 import uuid
 
+import pytest
+
 from app.config import Settings
-from app.services.media import MediaService
+from app.services.media import MediaProcessingError, MediaService
 
 
 def test_base_options_keep_certificate_verification_enabled(tmp_path) -> None:
@@ -33,6 +35,41 @@ def test_ssl_errors_are_mapped_to_network() -> None:
     error = MediaService._mapped_error("SSL handshake failure")
 
     assert error.code == "network"
+
+
+def test_youtube_bot_verification_is_mapped_to_cookie_requirement() -> None:
+    error = MediaService._mapped_error(
+        "Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies"
+    )
+
+    assert error.code == "cookies_required"
+
+
+def test_actual_login_requirement_stays_separate() -> None:
+    error = MediaService._mapped_error("This video is only available to registered users")
+
+    assert error.code == "login_required"
+
+
+def test_configured_cookie_file_must_exist(tmp_path) -> None:
+    service = MediaService(
+        Settings(VIDEOS_DIR=tmp_path, YTDLP_COOKIES_FILE=tmp_path / "missing-cookies.txt")
+    )
+
+    with pytest.raises(MediaProcessingError) as caught:
+        service._base_options()
+
+    assert caught.value.code == "cookies_required"
+
+
+def test_configured_cookie_file_is_passed_to_ytdlp(tmp_path) -> None:
+    cookie_file = tmp_path / "youtube-cookies.txt"
+    cookie_file.write_text("# Netscape HTTP Cookie File\n")
+    service = MediaService(Settings(VIDEOS_DIR=tmp_path, YTDLP_COOKIES_FILE=cookie_file))
+
+    options = service._base_options()
+
+    assert options["cookiefile"] == str(cookie_file)
 
 
 def test_quality_extraction_and_limit(tmp_path) -> None:

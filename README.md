@@ -14,7 +14,7 @@ YouTube va Instagram mediasini Telegram orqali yetkazib beruvchi, navbat asosida
 - Bir xil parallel so‘rovlarni birlashtirish va media tahlili natijasini keshlash
 - Worker va lokal Bot API orasida katta faylni HTTP orqali qayta ko‘chirmaydigan umumiy volume
 - Faylni Telegram’ga yuborgach avtomatik o‘chirish
-- Foydalanuvchi va vazifa statistikasi uchun himoyalangan admin panel
+- PostgreSQL’dagi barcha 6 modul, qidiruv, filtr va sahifalashga ega himoyalangan admin panel
 - PostgreSQL, Redis, Nginx, Docker Compose va Alembic migratsiyalari
 - GitHub Actions orqali lint, test, security audit, image build va AWS deploy
 

@@ -157,7 +157,10 @@ class MediaService:
             options.pop("playlist_items")
             options["match_filter"] = self._instagram_story_match_filter(target_shortcode)
         if self.settings.YTDLP_COOKIES_FILE:
-            options["cookiefile"] = str(self.settings.YTDLP_COOKIES_FILE)
+            cookie_file = self.settings.YTDLP_COOKIES_FILE
+            if not cookie_file.is_file():
+                raise MediaProcessingError("cookies_required", "CookieFileMissing")
+            options["cookiefile"] = str(cookie_file)
         return options
 
     @staticmethod
@@ -451,11 +454,22 @@ class MediaService:
     def _mapped_error(message: str) -> MediaProcessingError:
         lowered = message.lower()
         mappings = (
+            (
+                (
+                    "confirm you're not a bot",
+                    "confirm you’re not a bot",
+                    "cookies-from-browser",
+                    "provide account cookies",
+                    "po token",
+                ),
+                "cookies_required",
+            ),
             (("private", "not available on this app"), "private"),
             (
-                ("sign in", "log in", "logged-in", "login required", "registered users", "cookies"),
+                ("sign in", "log in", "logged-in", "login required", "registered users"),
                 "login_required",
             ),
+            (("cookies",), "cookies_required"),
             (("geo", "country", "region"), "geo_restricted"),
             (("429", "too many requests", "rate-limit"), "rate_limited"),
             (("timed out", "timeout"), "timeout"),

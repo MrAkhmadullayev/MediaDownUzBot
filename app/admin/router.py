@@ -1,12 +1,14 @@
 import re
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.dependencies import get_db_session, require_admin
+from app.admin.presentation import MODULES, STATUS_LABELS, module_by_key, present_table
 from app.config import Settings
-from app.enums import JobStatus
+from app.enums import JobStatus, Platform
 from app.models import AdminSession
 from app.repositories import AdminRepository
 from app.services.crypto import create_token, csrf_token, token_hash, tokens_match
@@ -76,38 +78,84 @@ async def admin_login(
 @admin_router.get("", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard(
     request: Request,
+    view: str = Query(default="download_jobs", max_length=32),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=25, le=100),
+    q: str = Query(default="", max_length=100),
+    status_filter: str = Query(default="", alias="status", max_length=32),
+    platform_filter: str = Query(default="", alias="platform", max_length=16),
     session: AsyncSession = Depends(get_db_session),
     _: AdminSession = Depends(require_admin),
 ) -> HTMLResponse:
     settings: Settings = request.app.state.settings
+    allowed_views = {module["key"] for module in MODULES}
+    selected_view = view if view in allowed_views else "download_jobs"
+    selected_page_size = page_size if page_size in {25, 50, 100} else 25
+    selected_status = status_filter if status_filter in {item.value for item in JobStatus} else ""
+    selected_platform = (
+        platform_filter if platform_filter in {item.value for item in Platform} else ""
+    )
+    search_query = q.strip()
     stats = await AdminRepository.dashboard_stats(session)
-    users = await AdminRepository.recent_users(session)
-    jobs = await AdminRepository.recent_jobs(session)
+    counts = await AdminRepository.table_counts(session)
+    table_page = await AdminRepository.table_page(
+        session,
+        selected_view,
+        page,
+        selected_page_size,
+        search_query,
+        selected_status,
+        selected_platform,
+    )
+    columns, rows = present_table(selected_view, table_page.items)
     raw_session_token = request.state.admin_session_token
     raw_csrf_token = csrf_token(
         raw_session_token,
         settings.FIELD_ENCRYPTION_KEY.get_secret_value(),
     )
-    status_labels = {
-        JobStatus.PENDING_ANALYSIS: "Tahlil navbatida",
-        JobStatus.ANALYZING: "Tahlil qilinmoqda",
-        JobStatus.WAITING_SELECTION: "Tanlov kutilmoqda",
-        JobStatus.QUEUED: "Navbatda",
-        JobStatus.DOWNLOADING: "Yuklanmoqda",
-        JobStatus.UPLOADING: "Yuborilmoqda",
-        JobStatus.SUCCESS: "Muvaffaqiyatli",
-        JobStatus.ERROR: "Xatolik",
-        JobStatus.CANCELLED: "Bekor qilingan",
-    }
+    modules = [{**module, "count": counts[module["key"]]} for module in MODULES]
+
+    def page_url(target_page: int) -> str:
+        params = {
+            "view": selected_view,
+            "page": target_page,
+            "page_size": selected_page_size,
+        }
+        if search_query:
+            params["q"] = search_query
+        if selected_status:
+            params["status"] = selected_status
+        if selected_platform:
+            params["platform"] = selected_platform
+        return f"/admin?{urlencode(params)}"
+
+    first_item = (table_page.page - 1) * table_page.page_size + 1 if table_page.total else 0
+    last_item = min(table_page.page * table_page.page_size, table_page.total)
+    page_numbers = range(
+        max(1, table_page.page - 2),
+        min(table_page.pages, table_page.page + 2) + 1,
+    )
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="admin.html",
         context={
             "stats": stats,
-            "users": users,
-            "jobs": jobs,
+            "modules": modules,
+            "current_module": module_by_key(selected_view),
+            "selected_view": selected_view,
+            "columns": columns,
+            "rows": rows,
+            "table_page": table_page,
+            "first_item": first_item,
+            "last_item": last_item,
+            "page_numbers": page_numbers,
+            "page_url": page_url,
+            "query": search_query,
+            "status_filter": selected_status,
+            "platform_filter": selected_platform,
+            "status_options": [(item.value, STATUS_LABELS[item]) for item in JobStatus],
+            "platform_options": [(item.value, item.value.capitalize()) for item in Platform],
             "csrf_token": raw_csrf_token,
-            "status_labels": status_labels,
         },
     )
 

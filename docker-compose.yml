@@ -107,6 +107,7 @@ services:
       - ${WORKER_DNS_SECONDARY:-8.8.8.8}
     volumes:
       - ./videos:/app/videos
+      - ./secrets:/run/secrets:ro
     depends_on:
       telegram-bot-api:
         condition: service_healthy

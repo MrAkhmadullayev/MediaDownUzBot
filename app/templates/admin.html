@@ -1,90 +1,153 @@
+{% from 'macros/icons.html' import icon %}
 <!doctype html>
 <html lang="uz">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <title>MediaDownUzBot · Admin</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='admin.css') }}">
+  <meta name="color-scheme" content="light dark">
+  <title>{{ current_module.label }} · MediaDownUzBot</title>
+  <link rel="stylesheet" href="/static/admin.css">
+  <script src="/static/admin.js" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <p class="eyebrow">Boshqaruv markazi</p>
-      <h1>MediaDownUzBot</h1>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Asosiy navigatsiya">
+      <div class="brand">
+        <span class="brand-mark">{{ icon('download') }}</span>
+        <span><strong>MediaDownUzBot</strong><small>Boshqaruv markazi</small></span>
+      </div>
+      <nav class="side-nav">
+        <p class="nav-label">Ma’lumotlar bazasi</p>
+        {% for module in modules %}
+        <a class="nav-item{% if module.key == selected_view %} active{% endif %}" href="/admin?view={{ module.key }}&page_size={{ table_page.page_size }}"{% if module.key == selected_view %} aria-current="page"{% endif %}>
+          {{ icon(module.icon) }}
+          <span>{{ module.label }}</span>
+          <span class="nav-count">{{ module.count }}</span>
+        </a>
+        {% endfor %}
+      </nav>
+      <div class="sidebar-footer">
+        <span class="health-dot" aria-hidden="true"></span>
+        <span><strong>Tizim ishlamoqda</strong><small>PostgreSQL va Redis tayyor</small></span>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-title">
+          <span class="mobile-brand">{{ icon('menu') }}</span>
+          <div><p>Admin panel</p><h1>{{ current_module.label }}</h1></div>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-button" type="button" data-theme-toggle aria-label="Rang rejimini almashtirish" aria-pressed="false">
+            <span data-theme-icon="light">{{ icon('sun') }}</span>
+            <span data-theme-icon="dark">{{ icon('moon') }}</span>
+          </button>
+          <form method="post" action="/admin/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="button button-outline" type="submit">{{ icon('log-out') }}<span>Chiqish</span></button>
+          </form>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow"><span class="health-dot"></span> Jonli ma’lumotlar</div>
+            <h2>Tizim ko‘rsatkichlari</h2>
+            <p>Foydalanuvchilar, media jarayonlari va saqlangan tizim yozuvlari.</p>
+          </div>
+          <a class="button button-outline" href="/admin?view={{ selected_view }}&page_size={{ table_page.page_size }}">{{ icon('refresh-cw') }} Yangilash</a>
+        </section>
+
+        <section class="stats-grid" aria-label="Umumiy ko‘rsatkichlar">
+          <article class="stat-card"><span class="stat-icon">{{ icon('users') }}</span><div><p>Foydalanuvchilar</p><strong>{{ stats.users }}</strong></div></article>
+          <article class="stat-card"><span class="stat-icon">{{ icon('download') }}</span><div><p>Jami vazifalar</p><strong>{{ stats.jobs }}</strong></div></article>
+          <article class="stat-card"><span class="stat-icon success">{{ icon('circle-check') }}</span><div><p>Muvaffaqiyatli</p><strong>{{ stats.success }}</strong></div></article>
+          <article class="stat-card"><span class="stat-icon danger">{{ icon('circle-x') }}</span><div><p>Xatoliklar</p><strong>{{ stats.errors }}</strong></div></article>
+          <article class="stat-card"><span class="stat-icon warning">{{ icon('clock') }}</span><div><p>Faol jarayonlar</p><strong>{{ stats.active }}</strong></div></article>
+          <article class="stat-card"><span class="stat-icon muted">{{ icon('ban') }}</span><div><p>Bekor qilingan</p><strong>{{ stats.cancelled }}</strong></div></article>
+        </section>
+
+        <section class="module-strip" aria-label="Ma’lumotlar modullari">
+          {% for module in modules %}
+          <a class="module-card{% if module.key == selected_view %} active{% endif %}" href="/admin?view={{ module.key }}&page_size={{ table_page.page_size }}">
+            <span class="module-icon">{{ icon(module.icon) }}</span>
+            <span><strong>{{ module.label }}</strong><small>{{ module.description }}</small></span>
+            <b>{{ module.count }}</b>
+          </a>
+          {% endfor %}
+        </section>
+
+        <section class="data-card">
+          <div class="data-card-header">
+            <div class="data-title">
+              <span class="module-icon">{{ icon(current_module.icon) }}</span>
+              <div><h2>{{ current_module.label }}</h2><p>{{ current_module.description }}</p></div>
+            </div>
+            <span class="record-count">{{ table_page.total }} ta yozuv</span>
+          </div>
+
+          <form class="toolbar" method="get" action="/admin">
+            <input type="hidden" name="view" value="{{ selected_view }}">
+            <input type="hidden" name="page_size" value="{{ table_page.page_size }}">
+            <label class="search-field">
+              <span class="sr-only">Qidirish</span>
+              {{ icon('search') }}
+              <input name="q" value="{{ query }}" maxlength="100" placeholder="ID, ism, sarlavha yoki xato bo‘yicha qidiring">
+            </label>
+            {% if selected_view == 'download_jobs' %}
+            <label class="select-field">
+              {{ icon('filter') }}
+              <span class="sr-only">Holat</span>
+              <select name="status">
+                <option value="">Barcha holatlar</option>
+                {% for value, label in status_options %}<option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+            </label>
+            {% endif %}
+            {% if selected_view in ['download_jobs', 'media_source_cache'] %}
+            <label class="select-field">
+              <span class="sr-only">Platforma</span>
+              <select name="platform">
+                <option value="">Barcha platformalar</option>
+                {% for value, label in platform_options %}<option value="{{ value }}"{% if platform_filter == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+            </label>
+            {% endif %}
+            <button class="button button-primary" type="submit">Qo‘llash</button>
+            {% if query or status_filter or platform_filter %}<a class="button button-ghost" href="/admin?view={{ selected_view }}&page_size={{ table_page.page_size }}">Tozalash</a>{% endif %}
+          </form>
+
+          <div class="table-scroll">
+            <table>
+              <thead><tr>{% for column in columns %}<th scope="col">{{ column }}</th>{% endfor %}</tr></thead>
+              <tbody>
+                {% for row in rows %}
+                <tr>{% for cell in row %}<td class="cell-{{ cell.kind }}"><span{% if cell.kind == 'badge' %} class="badge badge-{{ cell.tone }}"{% endif %}>{{ cell.value }}</span></td>{% endfor %}</tr>
+                {% else %}
+                <tr><td class="empty-state" colspan="{{ columns|length }}"><span class="empty-icon">{{ icon(current_module.icon) }}</span><strong>Yozuv topilmadi</strong><small>Qidiruv yoki filtrlarni o‘zgartirib ko‘ring.</small></td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <footer class="table-footer">
+            <div class="page-size">
+              <span>Har sahifada</span>
+              {% for size in [25, 50, 100] %}<a class="size-option{% if table_page.page_size == size %} active{% endif %}" href="/admin?view={{ selected_view }}&page_size={{ size }}{% if query %}&q={{ query|urlencode }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if platform_filter %}&platform={{ platform_filter }}{% endif %}">{{ size }}</a>{% endfor %}
+            </div>
+            <p>{{ first_item }}–{{ last_item }} / {{ table_page.total }}</p>
+            <nav class="pagination" aria-label="Sahifalar">
+              {% if table_page.page > 1 %}<a class="page-button" href="{{ page_url(table_page.page - 1) }}" aria-label="Oldingi sahifa">{{ icon('chevron-left') }}</a>{% else %}<span class="page-button disabled">{{ icon('chevron-left') }}</span>{% endif %}
+              {% for number in page_numbers %}<a class="page-button{% if number == table_page.page %} active{% endif %}" href="{{ page_url(number) }}"{% if number == table_page.page %} aria-current="page"{% endif %}>{{ number }}</a>{% endfor %}
+              {% if table_page.page < table_page.pages %}<a class="page-button" href="{{ page_url(table_page.page + 1) }}" aria-label="Keyingi sahifa">{{ icon('chevron-right') }}</a>{% else %}<span class="page-button disabled">{{ icon('chevron-right') }}</span>{% endif %}
+            </nav>
+          </footer>
+        </section>
+      </main>
     </div>
-    <form method="post" action="/admin/logout">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button class="button" type="submit">Xavfsiz chiqish</button>
-    </form>
-  </header>
-  <main>
-    <section class="hero">
-      <div>
-        <p class="eyebrow">Jonli ko‘rsatkichlar</p>
-        <h2>Tizim holati</h2>
-        <p>Foydalanuvchilar va media vazifalarining umumiy statistikasi.</p>
-      </div>
-      <span class="system-status"><i></i> Tizim ishlamoqda</span>
-    </section>
-    <section class="stats" aria-label="Umumiy statistika">
-      <article><span>Foydalanuvchilar</span><strong>{{ stats.users }}</strong></article>
-      <article><span>Jami vazifalar</span><strong>{{ stats.jobs }}</strong></article>
-      <article class="success"><span>Muvaffaqiyatli</span><strong>{{ stats.success }}</strong></article>
-      <article class="danger"><span>Xatoliklar</span><strong>{{ stats.errors }}</strong></article>
-      <article><span>Faol jarayonlar</span><strong>{{ stats.active }}</strong></article>
-      <article><span>Bekor qilingan</span><strong>{{ stats.cancelled }}</strong></article>
-    </section>
-    <section class="panel">
-      <div class="panel-heading">
-        <div><p class="eyebrow">Oxirgi 100 ta</p><h2>Foydalanuvchilar</h2></div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Foydalanuvchi</th><th>Telegram ID</th><th>Telefon</th><th>Jami</th><th>Success</th><th>Error</th><th>Ro‘yxatdan o‘tgan</th></tr></thead>
-          <tbody>
-          {% for user in users %}
-            <tr>
-              <td><strong>{{ user.first_name }} {{ user.last_name or '' }}</strong><small>{% if user.username %}@{{ user.username }}{% else %}username yo‘q{% endif %}</small></td>
-              <td><code>{{ user.telegram_id }}</code></td>
-              <td>•••• {{ user.phone_last4 or '—' }}</td>
-              <td>{{ user.jobs or 0 }}</td>
-              <td class="text-success">{{ user.success or 0 }}</td>
-              <td class="text-danger">{{ user.errors or 0 }}</td>
-              <td>{{ user.registered_at.strftime('%d.%m.%Y %H:%M') if user.registered_at else '—' }}</td>
-            </tr>
-          {% else %}
-            <tr><td colspan="7" class="empty">Hozircha foydalanuvchilar yo‘q.</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </section>
-    <section class="panel">
-      <div class="panel-heading">
-        <div><p class="eyebrow">Oxirgi 100 ta</p><h2>Media vazifalari</h2></div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Vaqt</th><th>User ID</th><th>Platforma</th><th>Format</th><th>Sifat</th><th>Holat</th><th>Xato kodi</th></tr></thead>
-          <tbody>
-          {% for job in jobs %}
-            <tr>
-              <td>{{ job.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
-              <td><code>{{ job.user_id }}</code></td>
-              <td>{{ job.platform.value|capitalize }}</td>
-              <td>{{ job.media_type.value if job.media_type else '—' }}</td>
-              <td>{{ job.quality or '—' }}</td>
-              <td><span class="status status-{{ job.status.value }}">{{ status_labels[job.status] }}</span></td>
-              <td>{{ job.error_code or '—' }}</td>
-            </tr>
-          {% else %}
-            <tr><td colspan="7" class="empty">Hozircha media vazifalari yo‘q.</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  </main>
+  </div>
 </body>
 </html>

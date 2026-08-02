@@ -1,7 +1,9 @@
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import case, delete, func, select, update
+from sqlalchemy import String, case, cast, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -418,6 +420,160 @@ class AdminRepository:
             select(DownloadJob).order_by(DownloadJob.created_at.desc()).limit(limit)
         )
         return list(result)
+
+    @staticmethod
+    async def table_counts(session: AsyncSession) -> dict[str, int]:
+        row = (
+            await session.execute(
+                select(
+                    select(func.count()).select_from(User).scalar_subquery(),
+                    select(func.count()).select_from(DownloadJob).scalar_subquery(),
+                    select(func.count()).select_from(MediaSourceCache).scalar_subquery(),
+                    select(func.count()).select_from(TelegramFileCache).scalar_subquery(),
+                    select(func.count()).select_from(AdminLoginToken).scalar_subquery(),
+                    select(func.count()).select_from(AdminSession).scalar_subquery(),
+                )
+            )
+        ).one()
+        keys = (
+            "users",
+            "download_jobs",
+            "media_source_cache",
+            "telegram_file_cache",
+            "admin_login_tokens",
+            "admin_sessions",
+        )
+        return {key: int(value or 0) for key, value in zip(keys, row, strict=True)}
+
+    @staticmethod
+    async def table_page(
+        session: AsyncSession,
+        view: str,
+        page: int,
+        page_size: int,
+        query: str = "",
+        status_filter: str = "",
+        platform_filter: str = "",
+    ) -> "AdminPage":
+        model, statement, criteria, order_by = AdminRepository._table_query(
+            view,
+            query,
+            status_filter,
+            platform_filter,
+        )
+        filtered = statement.where(*criteria)
+        total = int(
+            await session.scalar(
+                select(func.count()).select_from(filtered.order_by(None).subquery())
+            )
+            or 0
+        )
+        pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(page, pages)
+        result = await session.scalars(
+            filtered.order_by(order_by).offset((current_page - 1) * page_size).limit(page_size)
+        )
+        return AdminPage(
+            items=list(result),
+            total=total,
+            page=current_page,
+            page_size=page_size,
+            pages=pages,
+            model=model,
+        )
+
+    @staticmethod
+    def _table_query(
+        view: str,
+        query: str,
+        status_filter: str,
+        platform_filter: str,
+    ) -> tuple[type[Any], Any, list[Any], Any]:
+        criteria: list[Any] = []
+        if view == "users":
+            model = User
+            if query:
+                criteria.append(
+                    or_(
+                        cast(User.telegram_id, String).contains(query, autoescape=True),
+                        User.username.contains(query, autoescape=True),
+                        User.first_name.contains(query, autoescape=True),
+                        User.last_name.contains(query, autoescape=True),
+                        User.phone_last4.contains(query, autoescape=True),
+                    )
+                )
+            return model, select(model), criteria, User.created_at.desc()
+        if view == "download_jobs":
+            model = DownloadJob
+            if query:
+                criteria.append(
+                    or_(
+                        cast(DownloadJob.id, String).contains(query, autoescape=True),
+                        cast(DownloadJob.user_id, String).contains(query, autoescape=True),
+                        DownloadJob.title.contains(query, autoescape=True),
+                        DownloadJob.error_code.contains(query, autoescape=True),
+                        DownloadJob.error_detail.contains(query, autoescape=True),
+                    )
+                )
+            if status_filter:
+                criteria.append(DownloadJob.status == status_filter)
+            if platform_filter:
+                criteria.append(DownloadJob.platform == platform_filter)
+            return model, select(model), criteria, DownloadJob.created_at.desc()
+        if view == "media_source_cache":
+            model = MediaSourceCache
+            if query:
+                criteria.append(
+                    or_(
+                        MediaSourceCache.source_key.contains(query, autoescape=True),
+                        MediaSourceCache.title.contains(query, autoescape=True),
+                    )
+                )
+            if platform_filter:
+                criteria.append(MediaSourceCache.platform == platform_filter)
+            return model, select(model), criteria, MediaSourceCache.updated_at.desc()
+        if view == "telegram_file_cache":
+            model = TelegramFileCache
+            if query:
+                criteria.append(
+                    or_(
+                        TelegramFileCache.source_key.contains(query, autoescape=True),
+                        TelegramFileCache.title.contains(query, autoescape=True),
+                        TelegramFileCache.quality.contains(query, autoescape=True),
+                    )
+                )
+            return model, select(model), criteria, TelegramFileCache.last_used_at.desc()
+        if view == "admin_login_tokens":
+            model = AdminLoginToken
+            if query:
+                criteria.append(
+                    or_(
+                        cast(AdminLoginToken.id, String).contains(query, autoescape=True),
+                        cast(AdminLoginToken.telegram_id, String).contains(query, autoescape=True),
+                    )
+                )
+            return model, select(model), criteria, AdminLoginToken.created_at.desc()
+        if view == "admin_sessions":
+            model = AdminSession
+            if query:
+                criteria.append(
+                    or_(
+                        cast(AdminSession.id, String).contains(query, autoescape=True),
+                        cast(AdminSession.telegram_id, String).contains(query, autoescape=True),
+                    )
+                )
+            return model, select(model), criteria, AdminSession.last_seen_at.desc()
+        raise ValueError("Noma’lum admin moduli")
+
+
+@dataclass(frozen=True, slots=True)
+class AdminPage:
+    items: list[Any]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    model: type[Any]
 
 
 def selected_quality(media_type: MediaType, quality: str) -> str:

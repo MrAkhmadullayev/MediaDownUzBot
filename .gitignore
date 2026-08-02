@@ -16,3 +16,5 @@ build/
 htmlcov/
 videos/*
 !videos/.gitkeep
+secrets/*
+!secrets/.gitkeep

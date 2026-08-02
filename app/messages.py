@@ -95,7 +95,10 @@ ERROR_MESSAGES = {
     "too_large": "Fayl hajmi Telegram orqali yuborish uchun ruxsat etilgan 2 GB limitdan katta.",
     "timeout": "Yuklab olish uchun ajratilgan vaqt tugadi. Qayta urinib ko‘ring.",
     "upload_failed": "Fayl yuklandi, ammo Telegram’ga yuborib bo‘lmadi.",
-    "cookies_required": "Manba ushbu media uchun qo‘shimcha tasdiqlash talab qildi.",
+    "cookies_required": (
+        "YouTube serverdan robot emasligini tasdiqlashni so‘radi. "
+        "Administrator tasdiqlash ma’lumotini yangilagach qayta urinib ko‘ring."
+    ),
     "network": "Tarmoq bilan vaqtinchalik muammo yuz berdi. Qayta urinib ko‘ring.",
     "invalid_media": "Havolada yuklab olinadigan video yoki audio topilmadi.",
     "internal": "Kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko‘ring.",

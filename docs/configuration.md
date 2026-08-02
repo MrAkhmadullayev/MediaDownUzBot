@@ -43,4 +43,28 @@ Production’da `APP_ENV=production`, `COOKIE_SECURE=true`, `ADMIN_BASE_URL=http
 
 `TELEGRAM_API_HASH` va `BOT_TOKEN` maxfiy qiymatlardir. Ularni log, issue yoki Git commit ichiga yozmang. `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` BotFather tokenidan alohida bo‘lib, [my.telegram.org/apps](https://my.telegram.org/apps) sahifasida bir marta olinadi.
 
-Instagram yoki YouTube login talab qiladigan kontent uchun `YTDLP_COOKIES_FILE` ishlatilishi mumkin, ammo cookie faylini repository yoki Docker image ichiga joylamaslik kerak. Uni secret mount orqali faqat worker konteyneriga read-only ulang.
+Instagram yoki YouTube server IP manzilidan qo‘shimcha tasdiqlash talab qilganda `YTDLP_COOKIES_FILE` ishlatiladi. Cookie faylini repository, Docker image, log yoki chatga joylamang. Compose `./secrets` katalogini faqat worker konteyneridagi `/run/secrets` manziliga read-only ulaydi.
+
+Brauzerdan o‘zingizga tegishli YouTube sessiyasini Netscape formatida eksport qilib, serverda quyidagicha saqlang:
+
+```bash
+cd /opt/mediadownuzbot
+sudo install -d -m 700 -o ubuntu -g ubuntu secrets
+sudo install -m 600 -o ubuntu -g ubuntu /xavfsiz/manba/youtube-cookies.txt secrets/youtube-cookies.txt
+```
+
+Serverdagi `.env` fayliga quyidagini kiriting:
+
+```dotenv
+YTDLP_COOKIES_FILE=/run/secrets/youtube-cookies.txt
+```
+
+Faqat worker xizmatini qayta yarating va holatini tekshiring:
+
+```bash
+sudo docker compose up -d --force-recreate worker
+sudo docker compose exec worker test -r /run/secrets/youtube-cookies.txt
+sudo docker compose logs --tail=100 worker
+```
+
+Cookie eskirsa yangisini ayni fayl ustiga xavfsiz nusxalab, worker’ni qayta yarating. Cookie fayli mavjud bo‘lmasa yoki YouTube tasdiqlashi eskirsa bot foydalanuvchiga aniq tasdiqlash xabarini qaytaradi; bunday holat private video xatosi sifatida ko‘rsatilmaydi.

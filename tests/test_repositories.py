@@ -29,10 +29,20 @@ async def test_user_job_and_dashboard_stats() -> None:
             Platform.YOUTUBE,
         )
         job.status = JobStatus.SUCCESS
+        await AdminRepository.create_login_token(session, user.telegram_id, "a" * 64, 300)
+        await AdminRepository.create_session(
+            session,
+            user.telegram_id,
+            "b" * 64,
+            "c" * 64,
+            12,
+        )
         await session.commit()
     async with factory() as session:
         stats = await AdminRepository.dashboard_stats(session)
         users = await AdminRepository.recent_users(session)
+        counts = await AdminRepository.table_counts(session)
+        user_page = await AdminRepository.table_page(session, "users", 1, 25, "tester")
     assert stats == {
         "users": 1,
         "jobs": 1,
@@ -42,6 +52,16 @@ async def test_user_job_and_dashboard_stats() -> None:
         "active": 0,
     }
     assert users[0]["jobs"] == 1
+    assert counts == {
+        "users": 1,
+        "download_jobs": 1,
+        "media_source_cache": 0,
+        "telegram_file_cache": 0,
+        "admin_login_tokens": 1,
+        "admin_sessions": 1,
+    }
+    assert user_page.total == 1
+    assert user_page.items[0].telegram_id == 42
     await engine.dispose()
 
 

@@ -1,19 +1,25 @@
+{% from 'macros/icons.html' import icon %}
 <!doctype html>
 <html lang="uz">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <title>MediaDownUzBot · Kirish</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='/admin.css') }}">
+  <meta name="color-scheme" content="light dark">
+  <title>Admin panel · MediaDownUzBot</title>
+  <link rel="stylesheet" href="/static/admin.css">
+  <script src="/static/admin.js" defer></script>
 </head>
-<body class="centered-page">
-  <main class="access-card">
-    <div class="access-icon">🔐</div>
+<body class="auth-page">
+  <button class="icon-button auth-theme" type="button" data-theme-toggle aria-label="Rang rejimini almashtirish" aria-pressed="false">
+    <span data-theme-icon="light">{{ icon('sun') }}</span><span data-theme-icon="dark">{{ icon('moon') }}</span>
+  </button>
+  <main class="auth-card">
+    <span class="auth-icon">{{ icon('lock-keyhole') }}</span>
     <p class="eyebrow">MediaDownUzBot</p>
     <h1>Admin panel</h1>
     <p>{{ message }}</p>
-    <p class="muted">Telegram botdagi “Admin panel” tugmasidan foydalaning.</p>
+    <div class="auth-hint">{{ icon('shield-check') }}<span>Telegram botdagi “Admin panel” tugmasidan yangi bir martalik havola oling.</span></div>
   </main>
 </body>
 </html>
