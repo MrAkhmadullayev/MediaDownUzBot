@@ -43,7 +43,7 @@ Production’da `APP_ENV=production`, `COOKIE_SECURE=true`, `ADMIN_BASE_URL=http
 
 `TELEGRAM_API_HASH` va `BOT_TOKEN` maxfiy qiymatlardir. Ularni log, issue yoki Git commit ichiga yozmang. `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` BotFather tokenidan alohida bo‘lib, [my.telegram.org/apps](https://my.telegram.org/apps) sahifasida bir marta olinadi.
 
-Instagram yoki YouTube server IP manzilidan qo‘shimcha tasdiqlash talab qilganda `YTDLP_COOKIES_FILE` ishlatiladi. Cookie faylini repository, Docker image, log yoki chatga joylamang. Compose `./secrets` katalogini faqat worker konteyneridagi `/run/secrets` manziliga read-only ulaydi.
+Instagram yoki YouTube server IP manzilidan qo‘shimcha tasdiqlash talab qilganda `YTDLP_COOKIES_FILE` ishlatiladi. Cookie faylini repository, Docker image, log yoki chatga joylamang. Compose `./secrets` katalogini faqat worker konteyneridagi `/run/secrets` manziliga read-only ulaydi. Worker har bir vazifa uchun cookie faylining `0600` huquqli vaqtinchalik nusxasini yaratadi va vazifa tugagach uni avtomatik o‘chiradi; asl secret o‘zgartirilmaydi.
 
 Brauzerdan o‘zingizga tegishli YouTube sessiyasini Netscape formatida eksport qilib, serverda quyidagicha saqlang:
 

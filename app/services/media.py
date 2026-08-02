@@ -1,7 +1,10 @@
 import math
 import shutil
+import tempfile
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,11 +46,11 @@ class MediaService:
         self.settings = settings
 
     def probe(self, url: str) -> MediaInfo:
-        options = self._base_options(url)
-        options.update({"skip_download": True})
         try:
-            with yt_dlp.YoutubeDL(options) as downloader:
-                info = downloader.extract_info(url, download=False)
+            with self._prepared_options(url) as options:
+                options.update({"skip_download": True})
+                with yt_dlp.YoutubeDL(options) as downloader:
+                    info = downloader.extract_info(url, download=False)
             media = self._single_media(info)
             duration = self._duration(media)
             qualities = self._qualities(media)
@@ -72,23 +75,23 @@ class MediaService:
         quality: str,
     ) -> DownloadedMedia:
         work_dir = self._prepare_work_dir(job_id)
-        options = self._base_options(url)
-        options.update(
-            {
-                "paths": {"home": str(work_dir), "temp": str(work_dir)},
-                "outtmpl": {"default": "media.%(ext)s"},
-                "overwrites": True,
-                "continuedl": False,
-                "max_filesize": self.settings.upload_limit_bytes,
-            }
-        )
-        if media_type == MediaType.VIDEO:
-            options.update(self._video_options(quality))
-        else:
-            options.update(self._audio_options(quality))
         try:
-            with yt_dlp.YoutubeDL(options) as downloader:
-                info = downloader.extract_info(url, download=True)
+            with self._prepared_options(url) as options:
+                options.update(
+                    {
+                        "paths": {"home": str(work_dir), "temp": str(work_dir)},
+                        "outtmpl": {"default": "media.%(ext)s"},
+                        "overwrites": True,
+                        "continuedl": False,
+                        "max_filesize": self.settings.upload_limit_bytes,
+                    }
+                )
+                if media_type == MediaType.VIDEO:
+                    options.update(self._video_options(quality))
+                else:
+                    options.update(self._audio_options(quality))
+                with yt_dlp.YoutubeDL(options) as downloader:
+                    info = downloader.extract_info(url, download=True)
             media = self._single_media(info)
             duration = self._duration(media)
             path = self._find_output_file(work_dir)
@@ -156,12 +159,23 @@ class MediaService:
         if target_shortcode:
             options.pop("playlist_items")
             options["match_filter"] = self._instagram_story_match_filter(target_shortcode)
-        if self.settings.YTDLP_COOKIES_FILE:
-            cookie_file = self.settings.YTDLP_COOKIES_FILE
-            if not cookie_file.is_file():
-                raise MediaProcessingError("cookies_required", "CookieFileMissing")
-            options["cookiefile"] = str(cookie_file)
         return options
+
+    @contextmanager
+    def _prepared_options(self, url: str | None = None) -> Iterator[dict[str, Any]]:
+        options = self._base_options(url)
+        source = self.settings.YTDLP_COOKIES_FILE
+        if source is None:
+            yield options
+            return
+        if not source.is_file():
+            raise MediaProcessingError("cookies_required", "CookieFileMissing")
+        with tempfile.TemporaryDirectory(prefix="mediadown-ytdlp-") as temp_dir:
+            cookie_file = Path(temp_dir) / "cookies.txt"
+            shutil.copyfile(source, cookie_file)
+            cookie_file.chmod(0o600)
+            options["cookiefile"] = str(cookie_file)
+            yield options
 
     @staticmethod
     def _instagram_story_match_filter(target_shortcode: str) -> Any:

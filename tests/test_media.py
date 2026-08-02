@@ -1,6 +1,8 @@
 import uuid
+from pathlib import Path
 
 import pytest
+import yt_dlp
 
 from app.config import Settings
 from app.services.media import MediaProcessingError, MediaService
@@ -56,20 +58,28 @@ def test_configured_cookie_file_must_exist(tmp_path) -> None:
         Settings(VIDEOS_DIR=tmp_path, YTDLP_COOKIES_FILE=tmp_path / "missing-cookies.txt")
     )
 
-    with pytest.raises(MediaProcessingError) as caught:
-        service._base_options()
+    with pytest.raises(MediaProcessingError) as caught, service._prepared_options():
+        pass
 
     assert caught.value.code == "cookies_required"
 
 
-def test_configured_cookie_file_is_passed_to_ytdlp(tmp_path) -> None:
+def test_configured_cookie_file_uses_a_private_writable_copy(tmp_path) -> None:
     cookie_file = tmp_path / "youtube-cookies.txt"
     cookie_file.write_text("# Netscape HTTP Cookie File\n")
+    cookie_file.chmod(0o400)
     service = MediaService(Settings(VIDEOS_DIR=tmp_path, YTDLP_COOKIES_FILE=cookie_file))
 
-    options = service._base_options()
+    with service._prepared_options() as options:
+        prepared_cookie = options["cookiefile"]
+        assert prepared_cookie != str(cookie_file)
+        assert Path(prepared_cookie).read_text() == "# Netscape HTTP Cookie File\n"
+        assert Path(prepared_cookie).stat().st_mode & 0o777 == 0o600
+        with yt_dlp.YoutubeDL(options):
+            pass
 
-    assert options["cookiefile"] == str(cookie_file)
+    assert not Path(prepared_cookie).exists()
+    assert cookie_file.read_text() == "# Netscape HTTP Cookie File\n"
 
 
 def test_quality_extraction_and_limit(tmp_path) -> None:
