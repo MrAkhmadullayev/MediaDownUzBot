@@ -84,26 +84,19 @@ class MediaService:
                 qualities=[],
                 quality_sizes={"video": {}, "audio": {}},
             )
-        try:
-            with self._prepared_options(url) as options:
-                options.update({"skip_download": True})
-                with yt_dlp.YoutubeDL(options) as downloader:
-                    info = downloader.extract_info(url, download=False)
-            media = self._single_media(info)
-            duration = self._duration(media)
-            qualities = self._qualities(media)
-            return MediaInfo(
-                title=self._title(media),
-                duration_seconds=duration,
-                qualities=qualities,
-                quality_sizes=self._quality_sizes(media, qualities, duration),
-            )
-        except MediaProcessingError:
-            raise
-        except (DownloadError, RequestError) as exc:
-            raise self._mapped_error(str(exc)) from None
-        except Exception as exc:
-            raise MediaProcessingError("internal", type(exc).__name__) from None
+        for use_cookies in self._youtube_cookie_attempts():
+            try:
+                return self._probe_youtube(url, use_cookies=use_cookies)
+            except MediaProcessingError:
+                raise
+            except (DownloadError, RequestError) as exc:
+                error = self._mapped_error(str(exc))
+                if self._should_retry_with_cookies(error, use_cookies):
+                    continue
+                raise error from None
+            except Exception as exc:
+                raise MediaProcessingError("internal", type(exc).__name__) from None
+        raise MediaProcessingError("cookies_required")
 
     def download(
         self,
@@ -115,42 +108,81 @@ class MediaService:
         work_dir = self._prepare_work_dir(job_id)
         if self._is_instagram_url(url):
             return self._download_instagram(url, work_dir)
-        try:
-            with self._prepared_options(url) as options:
-                options.update(
-                    {
-                        "paths": {"home": str(work_dir), "temp": str(work_dir)},
-                        "outtmpl": {"default": "media.%(ext)s"},
-                        "overwrites": True,
-                        "continuedl": False,
-                        "max_filesize": self.settings.upload_limit_bytes,
-                    }
+        for use_cookies in self._youtube_cookie_attempts():
+            if use_cookies:
+                self._clear_work_dir(work_dir)
+            try:
+                return self._download_youtube(
+                    url,
+                    work_dir,
+                    media_type,
+                    quality,
+                    use_cookies=use_cookies,
                 )
-                if media_type == MediaType.VIDEO:
-                    options.update(self._video_options(quality))
-                else:
-                    options.update(self._audio_options(quality))
-                with yt_dlp.YoutubeDL(options) as downloader:
-                    info = downloader.extract_info(url, download=True)
-            media = self._single_media(info)
-            duration = self._duration(media)
-            path = self._find_output_file(work_dir)
-            path.chmod(0o644)
-            size = path.stat().st_size
-            if size > self.settings.upload_limit_bytes:
-                raise MediaProcessingError("too_large")
-            return DownloadedMedia(
-                path=path,
-                title=self._title(media),
-                duration_seconds=duration,
-                size_bytes=size,
+            except MediaProcessingError:
+                raise
+            except (DownloadError, RequestError) as exc:
+                error = self._mapped_error(str(exc))
+                if self._should_retry_with_cookies(error, use_cookies):
+                    continue
+                raise error from None
+            except Exception as exc:
+                raise MediaProcessingError("internal", type(exc).__name__) from None
+        raise MediaProcessingError("cookies_required")
+
+    def _probe_youtube(self, url: str, *, use_cookies: bool) -> MediaInfo:
+        with self._prepared_options(url, use_cookies=use_cookies) as options:
+            options.update({"skip_download": True})
+            with yt_dlp.YoutubeDL(options) as downloader:
+                info = downloader.extract_info(url, download=False)
+        media = self._single_media(info)
+        duration = self._duration(media)
+        qualities = self._qualities(media)
+        return MediaInfo(
+            title=self._title(media),
+            duration_seconds=duration,
+            qualities=qualities,
+            quality_sizes=self._quality_sizes(media, qualities, duration),
+        )
+
+    def _download_youtube(
+        self,
+        url: str,
+        work_dir: Path,
+        media_type: MediaType,
+        quality: str,
+        *,
+        use_cookies: bool,
+    ) -> DownloadedMedia:
+        with self._prepared_options(url, use_cookies=use_cookies) as options:
+            options.update(
+                {
+                    "paths": {"home": str(work_dir), "temp": str(work_dir)},
+                    "outtmpl": {"default": "media.%(ext)s"},
+                    "overwrites": True,
+                    "continuedl": False,
+                    "max_filesize": self.settings.upload_limit_bytes,
+                }
             )
-        except MediaProcessingError:
-            raise
-        except (DownloadError, RequestError) as exc:
-            raise self._mapped_error(str(exc)) from None
-        except Exception as exc:
-            raise MediaProcessingError("internal", type(exc).__name__) from None
+            if media_type == MediaType.VIDEO:
+                options.update(self._video_options(quality))
+            else:
+                options.update(self._audio_options(quality))
+            with yt_dlp.YoutubeDL(options) as downloader:
+                info = downloader.extract_info(url, download=True)
+        media = self._single_media(info)
+        duration = self._duration(media)
+        path = self._find_output_file(work_dir)
+        path.chmod(0o644)
+        size = path.stat().st_size
+        if size > self.settings.upload_limit_bytes:
+            raise MediaProcessingError("too_large")
+        return DownloadedMedia(
+            path=path,
+            title=self._title(media),
+            duration_seconds=duration,
+            size_bytes=size,
+        )
 
     def _download_instagram(self, url: str, work_dir: Path) -> DownloadedMedia:
         try:
@@ -265,6 +297,14 @@ class MediaService:
             "restrictfilenames": True,
             "windowsfilenames": True,
         }
+        provider_url = self.settings.YTDLP_POT_PROVIDER_URL
+        if provider_url:
+            options["extractor_args"] = {
+                "youtubepot-bgutilhttp": {"base_url": [provider_url]},
+            }
+        proxy_url = self.settings.YTDLP_PROXY_URL
+        if proxy_url:
+            options["proxy"] = proxy_url.get_secret_value()
         target_shortcode = instagram_story_target_shortcode(url) if url else None
         if target_shortcode:
             options.pop("playlist_items")
@@ -272,8 +312,16 @@ class MediaService:
         return options
 
     @contextmanager
-    def _prepared_options(self, url: str | None = None) -> Iterator[dict[str, Any]]:
+    def _prepared_options(
+        self,
+        url: str | None = None,
+        *,
+        use_cookies: bool = True,
+    ) -> Iterator[dict[str, Any]]:
         options = self._base_options(url)
+        if not use_cookies:
+            yield options
+            return
         source = self.settings.YTDLP_COOKIES_FILE
         if source is None:
             yield options
@@ -286,6 +334,30 @@ class MediaService:
             cookie_file.chmod(0o600)
             options["cookiefile"] = str(cookie_file)
             yield options
+
+    def _youtube_cookie_attempts(self) -> tuple[bool, ...]:
+        if self.settings.YTDLP_COOKIES_FILE is None:
+            return (False,)
+        return False, True
+
+    def _should_retry_with_cookies(
+        self,
+        error: MediaProcessingError,
+        use_cookies: bool,
+    ) -> bool:
+        return (
+            not use_cookies
+            and self.settings.YTDLP_COOKIES_FILE is not None
+            and error.code in {"cookies_required", "login_required", "private"}
+        )
+
+    @staticmethod
+    def _clear_work_dir(work_dir: Path) -> None:
+        for child in work_dir.iterdir():
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink(missing_ok=True)
 
     @contextmanager
     def _prepared_instagram_cookie(self) -> Iterator[Path | None]:

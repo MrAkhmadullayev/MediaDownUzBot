@@ -25,13 +25,15 @@ Har task UUID katalogida ishlaydi. Path resolve tekshiruvi katalogdan chiqishni 
 
 ## Konteyner himoyasi
 
-Ilova `app` nomli non-root user bilan ishlaydi. Ilova konteynerlari read-only filesystem, `no-new-privileges` va barcha Linux capability’lar o‘chirilgan holda ishga tushadi. Workerga faqat `videos` katalogi write huquqi beriladi.
+Ilova `app` nomli non-root user bilan ishlaydi. Ilova konteynerlari read-only filesystem, `no-new-privileges` va barcha Linux capability’lar o‘chirilgan holda ishga tushadi. Workerga faqat `videos` katalogi write huquqi beriladi. YouTube PO-token provider porti hostga publish qilinmaydi, read-only filesystem va capability’siz ishlaydi. Cookie hamda ixtiyoriy proxy credentiallari logga chiqarilmaydi va repositoryga kiritilmaydi.
 
 ## Production tekshiruv ro‘yxati
 
 - `COOKIE_SECURE=true` va HTTPS yoqilgan.
 - PostgreSQL va Redis public internetdan yopilgan.
 - `.env`, cookie fayli va backup kalitlari repositoryga kiritilmagan.
+- `youtube-pot-provider` faqat ichki Docker tarmog‘idan foydalanadi.
+- Proxy ishlatilsa, u shaxsiy va ishonchli providerga tegishli hamda credentiali secret sifatida saqlangan.
 - AWS IAM role minimal huquqlar bilan cheklangan.
 - CI’da Ruff, Pytest, Bandit, pip-audit va Docker build muvaffaqiyatli.
 - Database va EBS backup siyosati yoqilgan.

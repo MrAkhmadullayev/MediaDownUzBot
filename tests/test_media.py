@@ -19,6 +19,23 @@ def test_base_options_keep_certificate_verification_enabled(tmp_path) -> None:
     assert "legacyserverconnect" not in options
 
 
+def test_base_options_enable_pot_provider_and_optional_proxy(tmp_path) -> None:
+    service = MediaService(
+        Settings(
+            VIDEOS_DIR=tmp_path,
+            YTDLP_POT_PROVIDER_URL="http://pot-provider:4416/",
+            YTDLP_PROXY_URL="socks5h://proxy.example:1080",
+        )
+    )
+
+    options = service._base_options()
+
+    assert options["extractor_args"] == {
+        "youtubepot-bgutilhttp": {"base_url": ["http://pot-provider:4416"]}
+    }
+    assert options["proxy"] == "socks5h://proxy.example:1080"
+
+
 def test_shared_highlight_selects_only_requested_story(tmp_path) -> None:
     service = MediaService(Settings(VIDEOS_DIR=tmp_path))
     url = (
@@ -82,6 +99,64 @@ def test_configured_cookie_file_uses_a_private_writable_copy(tmp_path) -> None:
 
     assert not Path(prepared_cookie).exists()
     assert cookie_file.read_text() == "# Netscape HTTP Cookie File\n"
+
+
+def test_youtube_probe_tries_public_access_before_cookie_fallback(tmp_path, monkeypatch) -> None:
+    cookie_file = tmp_path / "youtube-cookies.txt"
+    cookie_file.write_text("# Netscape HTTP Cookie File\n")
+    attempts: list[bool] = []
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def extract_info(self, url, *, download):
+            attempts.append("cookiefile" in self.options)
+            if len(attempts) == 1:
+                raise yt_dlp.utils.DownloadError("Sign in to confirm you're not a bot")
+            assert Path(self.options["cookiefile"]).is_file()
+            return {"title": "Sinov", "formats": [{"height": 720, "vcodec": "avc1"}]}
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYoutubeDL)
+    service = MediaService(Settings(VIDEOS_DIR=tmp_path, YTDLP_COOKIES_FILE=cookie_file))
+
+    info = service.probe("https://youtu.be/4uDX2GD8ckg")
+
+    assert info.title == "Sinov"
+    assert attempts == [False, True]
+
+
+def test_public_youtube_probe_ignores_unneeded_stale_cookie(tmp_path, monkeypatch) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            assert "cookiefile" not in options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def extract_info(self, url, *, download):
+            return {"title": "Ochiq video", "formats": []}
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYoutubeDL)
+    service = MediaService(
+        Settings(
+            VIDEOS_DIR=tmp_path,
+            YTDLP_COOKIES_FILE=tmp_path / "expired-or-missing.txt",
+        )
+    )
+
+    info = service.probe("https://youtu.be/4uDX2GD8ckg")
+
+    assert info.title == "Ochiq video"
 
 
 def test_instagram_cookie_file_uses_a_private_copy(tmp_path) -> None:

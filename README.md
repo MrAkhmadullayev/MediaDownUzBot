@@ -23,7 +23,8 @@ YouTube va Instagram mediasini Telegram orqali yetkazib beruvchi, navbat asosida
 ```text
 Telegram -> Lokal Bot API -> Bot -> PostgreSQL
                            -> Redis -> Celery worker -> yt-dlp/gallery-dl/Deno/FFmpeg
-                                      |        |
+                                      |        |   |
+                                      |        |   +-> YouTube PO-token provider
                                       |        +-> videos (vaqtinchalik umumiy volume)
                                       +-> Telegram file_id keshi -> Telegram
 
@@ -106,4 +107,4 @@ Birinchi so‘rovda manbadan yuklash, zarur bo‘lsa FFmpeg birlashtirish va Tel
 
 ## Muhim cheklovlar
 
-YouTube va Instagram extractor qoidalarini vaqti-vaqti bilan o‘zgartiradi. `yt-dlp` va `gallery-dl` yangilanishlarini Dependabot orqali muntazam qabul qilish kerak. YouTube sifati yonidagi hajm manba bergan oqim hajmi yoki bitrate’dan hisoblangan taxminiy qiymat; yakuniy FFmpeg fayli biroz farq qilishi mumkin. Instagram Story va Highlight faqat hali mavjud hamda bot ko‘ra oladigan holatda yuklanadi; yopiq profil yoki login talab qiladigan media uchun workerga secret mount orqali Instagram cookie sessiyasi berilishi kerak. Shaxsiy, muddati tugagan, geo-cheklangan yoki har bir fayli 2 GB dan katta media yuborilmasligi mumkin. Foydalanuvchi yuklayotgan kontentga nisbatan mualliflik huquqi va platforma shartlariga rioya qilishi shart.
+YouTube va Instagram extractor qoidalarini vaqti-vaqti bilan o‘zgartiradi. `yt-dlp`, `gallery-dl` va PO-token provider yangilanishlarini Dependabot hamda CI orqali muntazam tekshirish kerak. YouTube ochiq videoni avval cookiesiz oladi; faqat autentifikatsiya zarur bo‘lsa himoyalangan cookie nusxasi bilan qayta urinadi. PO-token challenge’ni yechishga yordam beradi, ammo YouTube server IP manzilining o‘zini bloklasa ishonchli outbound proxy talab qilinishi mumkin. YouTube sifati yonidagi hajm manba bergan oqim hajmi yoki bitrate’dan hisoblangan taxminiy qiymat; yakuniy FFmpeg fayli biroz farq qilishi mumkin. Instagram Story va Highlight faqat hali mavjud hamda bot ko‘ra oladigan holatda yuklanadi; yopiq profil yoki login talab qiladigan media uchun workerga secret mount orqali Instagram cookie sessiyasi berilishi kerak. Shaxsiy, muddati tugagan, geo-cheklangan yoki har bir fayli 2 GB dan katta media yuborilmasligi mumkin. Foydalanuvchi yuklayotgan kontentga nisbatan mualliflik huquqi va platforma shartlariga rioya qilishi shart.

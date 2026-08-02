@@ -42,7 +42,7 @@ chmod 750 videos
 chmod 600 .env
 ```
 
-`.env` production qiymatlari, jumladan `BOT_TOKEN`, `TELEGRAM_API_ID` va `TELEGRAM_API_HASH` bilan to‘ldiriladi. API qiymatlari [my.telegram.org/apps](https://my.telegram.org/apps) sahifasidan olinadi.
+`.env` production qiymatlari, jumladan `BOT_TOKEN`, `TELEGRAM_API_ID` va `TELEGRAM_API_HASH` bilan to‘ldiriladi. API qiymatlari [my.telegram.org/apps](https://my.telegram.org/apps) sahifasidan olinadi. `YTDLP_POT_PROVIDER_URL=http://youtube-pot-provider:4416` Compose ichki xizmatiga ishora qiladi va public port talab qilmaydi. AWS public IP YouTube tomonidan cheklansa `YTDLP_PROXY_URL`ga faqat ishonchli shaxsiy outbound proxy yoziladi.
 
 Lokal Bot API’ga birinchi o‘tishda EC2 ichida botning bulut API sessiyasini bir marta yoping:
 
@@ -58,7 +58,7 @@ Workflow quyidagilarni bajaradi:
 1. CI tekshiruvlari muvaffaqiyatli tugaganini kutadi.
 2. Docker image’ni build qilib, SHA va `latest` taglari bilan ECR’ga push qiladi.
 3. SSM orqali EC2’ga image pull va migratsiya buyrug‘ini yuboradi.
-4. `docker compose up -d --remove-orphans` bilan xizmatlarni yangilaydi.
+4. `docker compose up -d --remove-orphans` bilan ilova va YouTube PO-token provider xizmatlarini yangilaydi.
 5. `/health/ready` endpointini tekshiradi.
 
 Rollback uchun oldingi commit SHA tagini `APP_IMAGE` sifatida ishlatib Compose xizmatlarini qayta ko‘taring. Database migratsiyasini orqaga qaytarish faqat migration mazmuni tekshirilgandan keyin bajariladi.

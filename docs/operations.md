@@ -6,7 +6,7 @@
 curl http://localhost:8080/health/live
 curl http://localhost:8080/health/ready
 docker compose ps
-docker compose logs --since=15m telegram-bot-api admin bot worker scheduler
+docker compose logs --since=15m telegram-bot-api youtube-pot-provider admin bot worker scheduler
 ```
 
 `live` web jarayon ishlayotganini, `ready` PostgreSQL va Redis ulanishlari tayyorligini bildiradi. Loglarda bot tokeni, telefon raqami yoki to‘liq manba URL yozilmaydi. Nginx access logi admin magic-link tokeni oshkor bo‘lmasligi uchun o‘chirilgan.
@@ -58,6 +58,17 @@ docker image prune -f
 ```
 
 `yt-dlp` va `gallery-dl` tez-tez o‘zgaradigan tashqi platformalarga bog‘liq. Dependabot pull requestlarini CI’dan o‘tkazib muntazam deploy qilish kerak.
+
+## YouTube robot tekshiruvi
+
+Bot “robot emasligini tasdiqlash” xabarini qaytarsa avval provider va worker holatini tekshiring:
+
+```bash
+docker compose ps youtube-pot-provider worker
+docker compose logs --tail=100 youtube-pot-provider worker
+```
+
+`youtube-pot-provider` `healthy` bo‘lishi kerak. Worker public videoni cookiesiz birinchi marta tekshiradi va faqat autentifikatsiya xatosida cookie bilan qayta urinadi. Shuning uchun eskirgan cookie oddiy public videoga majburan yuborilmaydi. Provider sog‘lom, cookie yangilangan, lekin ayni xato barcha public videolarda davom etsa YouTube EC2 public IP manzilini cheklagan bo‘lishi mumkin. Bunda `.env` dagi `YTDLP_PROXY_URL`ga ishonchli shaxsiy HTTP(S) yoki SOCKS proxy kiriting va worker’ni qayta yarating. Bepul proxy TLS, maxfiylik va barqarorlik xavfini oshiradi.
 
 ## Instagram TLS muammosi
 

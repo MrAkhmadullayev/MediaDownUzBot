@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.config import Settings
 
 
@@ -20,6 +23,27 @@ def test_local_telegram_api_settings() -> None:
 
 
 def test_empty_cookie_path_is_none() -> None:
-    settings = Settings(YTDLP_COOKIES_FILE="", INSTAGRAM_COOKIES_FILE="")
+    settings = Settings(
+        YTDLP_COOKIES_FILE="",
+        YTDLP_POT_PROVIDER_URL="",
+        YTDLP_PROXY_URL="",
+        INSTAGRAM_COOKIES_FILE="",
+    )
     assert settings.YTDLP_COOKIES_FILE is None
+    assert settings.YTDLP_POT_PROVIDER_URL is None
+    assert settings.YTDLP_PROXY_URL is None
     assert settings.INSTAGRAM_COOKIES_FILE is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("YTDLP_POT_PROVIDER_URL", "file:///tmp/provider"),
+        ("YTDLP_POT_PROVIDER_URL", "http://user:password@provider:4416"),
+        ("YTDLP_PROXY_URL", "ftp://proxy.example"),
+        ("YTDLP_PROXY_URL", "https://proxy.example/ bad"),
+    ],
+)
+def test_invalid_ytdlp_service_urls_are_rejected(field, value) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value})
