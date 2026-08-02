@@ -33,10 +33,16 @@ jobs:
           else
             echo "sha=$DISPATCH_SHA" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.source.outputs.sha }}
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com')
+            const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString())
+            core.info(JSON.stringify({ aud: claims.aud, sub: claims.sub }, null, 2))
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
