@@ -4,12 +4,24 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.admin.presentation import MODULES, module_by_key, present_table
-from app.enums import JobStatus, MediaType, Platform
+from app.enums import (
+    BroadcastStatus,
+    DeliveryStatus,
+    JobStatus,
+    MediaType,
+    Platform,
+    SupportSender,
+    SupportTicketStatus,
+)
 from app.models import (
     AdminLoginToken,
     AdminSession,
+    Broadcast,
+    BroadcastDelivery,
     DownloadJob,
     MediaSourceCache,
+    SupportMessage,
+    SupportTicket,
     TelegramFileCache,
     User,
 )
@@ -18,6 +30,8 @@ from app.models import (
 @pytest.fixture
 def table_records() -> dict[str, object]:
     now = datetime.now(UTC)
+    ticket_id = uuid.uuid4()
+    broadcast_id = uuid.uuid4()
     return {
         "users": User(
             telegram_id=1001,
@@ -84,6 +98,44 @@ def table_records() -> dict[str, object]:
             expires_at=now + timedelta(hours=1),
             last_seen_at=now,
             created_at=now,
+        ),
+        "support_tickets": SupportTicket(
+            id=ticket_id,
+            user_id=1001,
+            status=SupportTicketStatus.OPEN,
+            created_at=now,
+            updated_at=now,
+        ),
+        "support_messages": SupportMessage(
+            id=uuid.uuid4(),
+            ticket_id=ticket_id,
+            sender=SupportSender.ADMIN,
+            body="Test support javobi",
+            telegram_message_id=456,
+            delivery_status=DeliveryStatus.SENT,
+            created_at=now,
+            sent_at=now,
+        ),
+        "broadcasts": Broadcast(
+            id=broadcast_id,
+            body="Test ommaviy xabari",
+            status=BroadcastStatus.COMPLETED,
+            total_count=1,
+            sent_count=1,
+            failed_count=0,
+            created_by=1001,
+            created_at=now,
+            started_at=now,
+            completed_at=now,
+        ),
+        "broadcast_deliveries": BroadcastDelivery(
+            id=uuid.uuid4(),
+            broadcast_id=broadcast_id,
+            user_id=1001,
+            status=DeliveryStatus.SENT,
+            telegram_message_id=789,
+            created_at=now,
+            sent_at=now,
         ),
     }
 

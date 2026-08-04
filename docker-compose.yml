@@ -118,7 +118,7 @@ services:
 
   worker:
     <<: *app
-    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--queues=media", "--concurrency=${WORKER_CONCURRENCY:-4}", "--without-gossip", "--without-mingle"]
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--queues=media,notifications", "--concurrency=${WORKER_CONCURRENCY:-4}", "--without-gossip", "--without-mingle"]
     dns:
       - ${WORKER_DNS_PRIMARY:-1.1.1.1}
       - ${WORKER_DNS_SECONDARY:-8.8.8.8}

@@ -14,7 +14,9 @@ YouTube va Instagram mediasini Telegram orqali yetkazib beruvchi, navbat asosida
 - Bir xil parallel so‘rovlarni birlashtirish va media tahlili natijasini keshlash
 - Worker va lokal Bot API orasida katta faylni HTTP orqali qayta ko‘chirmaydigan umumiy volume
 - Faylni Telegram’ga yuborgach avtomatik o‘chirish
-- PostgreSQL’dagi barcha 6 modul, qidiruv, filtr va sahifalashga ega himoyalangan admin panel
+- Bot ichida murojaat yaratish, tarixni ko‘rish va administrator javobiga davomli reply yozish
+- Faol foydalanuvchilarga holati kuzatiladigan ommaviy xabar yuborish
+- PostgreSQL’dagi barcha 10 modul, qidiruv, filtr va sahifalashga ega himoyalangan admin panel
 - PostgreSQL, Redis, Nginx, Docker Compose va Alembic migratsiyalari
 - GitHub Actions orqali lint, test, security audit, image build va AWS deploy
 
@@ -28,7 +30,7 @@ Telegram -> Lokal Bot API -> Bot -> PostgreSQL
                                       |        +-> videos (vaqtinchalik umumiy volume)
                                       +-> Telegram file_id keshi -> Telegram
 
-Admin -> Nginx -> FastAPI -> PostgreSQL/Redis
+Admin -> Nginx -> FastAPI -> PostgreSQL -> notifications navbati -> Telegram
 ```
 
 Worker media fayllarini faqat `videos/<job-uuid>/` ichida vaqtincha saqlaydi. Lokal Bot API shu volume’dagi faylni bevosita o‘qiydi. Telegram yuborishi muvaffaqiyatli yoki xatolik bilan tugashi bilan katalog tozalanadi. Media faylining o‘zi bazada saqlanmaydi; faqat URL’ning SHA-256 identifikatori, metama’lumot va Telegram bergan `file_id` saqlanadi. PostgreSQL’da telefon raqami va hali tugamagan vazifaning manba havolasi Fernet bilan shifrlangan holda saqlanadi.
@@ -75,7 +77,7 @@ curl http://localhost:8080/health/ready
 
 `make local-api-init` faqat lokal Bot API’ga birinchi o‘tishda bir marta bajariladi. U botning Telegram bulut Bot API sessiyasini yopadi. Keyin bot faqat Docker ichidagi, internetga porti ochilmagan lokal Bot API orqali ishlaydi.
 
-Admin panel havolasi faqat botdagi `/admin` buyrug‘i orqali beriladi. Lokal Nginx manzili: [http://localhost:8080](http://localhost:8080).
+Admin panel havolasi faqat `ADMIN_TELEGRAM_IDS` ro‘yxatidagi foydalanuvchiga botning `📊 Admin panel` tugmasi orqali beriladi. `/admin` bot buyrug‘i ro‘yxatdan chiqarilgan. Lokal Nginx manzili: [http://localhost:8080](http://localhost:8080).
 
 ## Test va sifat nazorati
 
@@ -100,6 +102,7 @@ Birinchi so‘rovda manbadan yuklash, zarur bo‘lsa FFmpeg birlashtirish va Tel
 ## Hujjatlar
 
 - [Arxitektura va oqimlar](docs/architecture.md)
+- [Qo‘llab-quvvatlash va ommaviy xabarlar](docs/support-and-broadcasts.md)
 - [Konfiguratsiya](docs/configuration.md)
 - [AWS deployment](docs/deployment-aws.md)
 - [Ekspluatatsiya va masshtablash](docs/operations.md)

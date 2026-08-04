@@ -7,13 +7,27 @@ from sqlalchemy import String, case, cast, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.enums import TERMINAL_JOB_STATUSES, JobStatus, MediaType, Platform
+from app.enums import (
+    TERMINAL_JOB_STATUSES,
+    BroadcastStatus,
+    DeliveryStatus,
+    JobStatus,
+    MediaType,
+    Platform,
+    SupportSender,
+    SupportTicketStatus,
+)
 from app.models import (
     AdminLoginToken,
     AdminSession,
+    Broadcast,
+    BroadcastDelivery,
     DownloadJob,
     MediaSourceCache,
+    SupportMessage,
+    SupportTicket,
     TelegramFileCache,
     User,
 )
@@ -48,6 +62,7 @@ class UserRepository:
             user.first_name = first_name[:128]
             user.last_name = (last_name or "")[:128] or None
             user.last_seen_at = now
+            user.is_active = True
         await session.flush()
         return user
 
@@ -279,6 +294,249 @@ class MediaCacheRepository:
         await session.execute(statement)
 
 
+class SupportRepository:
+    @staticmethod
+    async def get_open(session: AsyncSession, user_id: int) -> SupportTicket | None:
+        return await session.scalar(
+            select(SupportTicket)
+            .where(
+                SupportTicket.user_id == user_id,
+                SupportTicket.status == SupportTicketStatus.OPEN,
+            )
+            .order_by(SupportTicket.updated_at.desc())
+            .limit(1)
+        )
+
+    @staticmethod
+    async def get_or_create_open(session: AsyncSession, user_id: int) -> SupportTicket:
+        ticket = await SupportRepository.get_open(session, user_id)
+        if ticket is None:
+            ticket = SupportTicket(user_id=user_id)
+            session.add(ticket)
+            await session.flush()
+        return ticket
+
+    @staticmethod
+    async def get_owned(
+        session: AsyncSession, ticket_id: uuid.UUID, user_id: int
+    ) -> SupportTicket | None:
+        return await session.scalar(
+            select(SupportTicket)
+            .where(SupportTicket.id == ticket_id, SupportTicket.user_id == user_id)
+            .options(selectinload(SupportTicket.messages))
+        )
+
+    @staticmethod
+    async def get_details(session: AsyncSession, ticket_id: uuid.UUID) -> SupportTicket | None:
+        return await session.scalar(
+            select(SupportTicket)
+            .where(SupportTicket.id == ticket_id)
+            .options(selectinload(SupportTicket.user), selectinload(SupportTicket.messages))
+        )
+
+    @staticmethod
+    async def list_owned(
+        session: AsyncSession, user_id: int, page: int = 1, page_size: int = 6
+    ) -> "AdminPage":
+        total = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(SupportTicket)
+                .where(SupportTicket.user_id == user_id)
+            )
+            or 0
+        )
+        pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(max(1, page), pages)
+        tickets = await session.scalars(
+            select(SupportTicket)
+            .where(SupportTicket.user_id == user_id)
+            .options(selectinload(SupportTicket.messages))
+            .order_by(SupportTicket.updated_at.desc())
+            .offset((current_page - 1) * page_size)
+            .limit(page_size)
+        )
+        return AdminPage(
+            items=list(tickets),
+            total=total,
+            page=current_page,
+            page_size=page_size,
+            pages=pages,
+            model=SupportTicket,
+        )
+
+    @staticmethod
+    async def list_admin(
+        session: AsyncSession,
+        page: int,
+        page_size: int,
+        query: str = "",
+        status_filter: str = "",
+    ) -> "AdminPage":
+        criteria: list[Any] = []
+        statement = select(SupportTicket).options(selectinload(SupportTicket.user))
+        if query:
+            criteria.append(
+                or_(
+                    cast(SupportTicket.id, String).contains(query, autoescape=True),
+                    cast(SupportTicket.user_id, String).contains(query, autoescape=True),
+                    SupportTicket.user.has(User.first_name.contains(query, autoescape=True)),
+                    SupportTicket.user.has(User.username.contains(query, autoescape=True)),
+                )
+            )
+        if status_filter:
+            criteria.append(SupportTicket.status == status_filter)
+        filtered = statement.where(*criteria)
+        total = int(
+            await session.scalar(
+                select(func.count()).select_from(
+                    select(SupportTicket.id).where(*criteria).subquery()
+                )
+            )
+            or 0
+        )
+        pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(max(1, page), pages)
+        result = await session.scalars(
+            filtered.order_by(SupportTicket.updated_at.desc())
+            .offset((current_page - 1) * page_size)
+            .limit(page_size)
+        )
+        return AdminPage(
+            items=list(result),
+            total=total,
+            page=current_page,
+            page_size=page_size,
+            pages=pages,
+            model=SupportTicket,
+        )
+
+    @staticmethod
+    async def add_message(
+        session: AsyncSession,
+        ticket: SupportTicket,
+        sender: SupportSender,
+        body: str,
+    ) -> SupportMessage:
+        now = datetime.now(UTC)
+        ticket.status = SupportTicketStatus.OPEN
+        ticket.closed_at = None
+        ticket.updated_at = now
+        message = SupportMessage(
+            ticket_id=ticket.id,
+            sender=sender,
+            body=body,
+            delivery_status=(
+                DeliveryStatus.SENT if sender == SupportSender.USER else DeliveryStatus.PENDING
+            ),
+            sent_at=now if sender == SupportSender.USER else None,
+        )
+        session.add(message)
+        await session.flush()
+        return message
+
+    @staticmethod
+    async def set_status(
+        session: AsyncSession, ticket: SupportTicket, status: SupportTicketStatus
+    ) -> None:
+        now = datetime.now(UTC)
+        ticket.status = status
+        ticket.updated_at = now
+        ticket.closed_at = now if status == SupportTicketStatus.CLOSED else None
+        await session.flush()
+
+    @staticmethod
+    async def find_owned_by_admin_message(
+        session: AsyncSession, user_id: int, telegram_message_id: int
+    ) -> SupportTicket | None:
+        return await session.scalar(
+            select(SupportTicket)
+            .join(SupportMessage, SupportMessage.ticket_id == SupportTicket.id)
+            .where(
+                SupportTicket.user_id == user_id,
+                SupportMessage.sender == SupportSender.ADMIN,
+                SupportMessage.telegram_message_id == telegram_message_id,
+            )
+            .options(selectinload(SupportTicket.messages))
+        )
+
+    @staticmethod
+    async def count_open(session: AsyncSession) -> int:
+        return int(
+            await session.scalar(
+                select(func.count())
+                .select_from(SupportTicket)
+                .where(SupportTicket.status == SupportTicketStatus.OPEN)
+            )
+            or 0
+        )
+
+
+class BroadcastRepository:
+    @staticmethod
+    async def count_recipients(session: AsyncSession) -> int:
+        return int(
+            await session.scalar(
+                select(func.count())
+                .select_from(User)
+                .where(User.is_registered.is_(True), User.is_active.is_(True))
+            )
+            or 0
+        )
+
+    @staticmethod
+    async def create(session: AsyncSession, body: str, created_by: int) -> Broadcast:
+        user_ids = list(
+            await session.scalars(
+                select(User.telegram_id).where(
+                    User.is_registered.is_(True), User.is_active.is_(True)
+                )
+            )
+        )
+        broadcast = Broadcast(body=body, created_by=created_by, total_count=len(user_ids))
+        if not user_ids:
+            broadcast.status = BroadcastStatus.COMPLETED
+            broadcast.completed_at = datetime.now(UTC)
+        session.add(broadcast)
+        await session.flush()
+        session.add_all(
+            [BroadcastDelivery(broadcast_id=broadcast.id, user_id=user_id) for user_id in user_ids]
+        )
+        await session.flush()
+        return broadcast
+
+    @staticmethod
+    async def list_recent(session: AsyncSession, limit: int = 50) -> list[Broadcast]:
+        result = await session.scalars(
+            select(Broadcast).order_by(Broadcast.created_at.desc()).limit(limit)
+        )
+        return list(result)
+
+    @staticmethod
+    async def get_with_deliveries(
+        session: AsyncSession, broadcast_id: uuid.UUID
+    ) -> Broadcast | None:
+        return await session.scalar(
+            select(Broadcast)
+            .where(Broadcast.id == broadcast_id)
+            .options(selectinload(Broadcast.deliveries).selectinload(BroadcastDelivery.user))
+        )
+
+    @staticmethod
+    async def update_totals(session: AsyncSession, broadcast: Broadcast) -> None:
+        counts = (
+            await session.execute(
+                select(
+                    func.sum(case((BroadcastDelivery.status == DeliveryStatus.SENT, 1), else_=0)),
+                    func.sum(case((BroadcastDelivery.status == DeliveryStatus.FAILED, 1), else_=0)),
+                ).where(BroadcastDelivery.broadcast_id == broadcast.id)
+            )
+        ).one()
+        broadcast.sent_count = int(counts[0] or 0)
+        broadcast.failed_count = int(counts[1] or 0)
+        await session.flush()
+
+
 class AdminRepository:
     @staticmethod
     async def create_login_token(
@@ -432,6 +690,10 @@ class AdminRepository:
                     select(func.count()).select_from(TelegramFileCache).scalar_subquery(),
                     select(func.count()).select_from(AdminLoginToken).scalar_subquery(),
                     select(func.count()).select_from(AdminSession).scalar_subquery(),
+                    select(func.count()).select_from(SupportTicket).scalar_subquery(),
+                    select(func.count()).select_from(SupportMessage).scalar_subquery(),
+                    select(func.count()).select_from(Broadcast).scalar_subquery(),
+                    select(func.count()).select_from(BroadcastDelivery).scalar_subquery(),
                 )
             )
         ).one()
@@ -442,6 +704,10 @@ class AdminRepository:
             "telegram_file_cache",
             "admin_login_tokens",
             "admin_sessions",
+            "support_tickets",
+            "support_messages",
+            "broadcasts",
+            "broadcast_deliveries",
         )
         return {key: int(value or 0) for key, value in zip(keys, row, strict=True)}
 
@@ -563,6 +829,58 @@ class AdminRepository:
                     )
                 )
             return model, select(model), criteria, AdminSession.last_seen_at.desc()
+        if view == "support_tickets":
+            model = SupportTicket
+            if query:
+                criteria.append(
+                    or_(
+                        cast(SupportTicket.id, String).contains(query, autoescape=True),
+                        cast(SupportTicket.user_id, String).contains(query, autoescape=True),
+                    )
+                )
+            if status_filter:
+                criteria.append(SupportTicket.status == status_filter)
+            return model, select(model), criteria, SupportTicket.updated_at.desc()
+        if view == "support_messages":
+            model = SupportMessage
+            if query:
+                criteria.append(
+                    or_(
+                        cast(SupportMessage.id, String).contains(query, autoescape=True),
+                        cast(SupportMessage.ticket_id, String).contains(query, autoescape=True),
+                        SupportMessage.body.contains(query, autoescape=True),
+                    )
+                )
+            if status_filter:
+                criteria.append(SupportMessage.delivery_status == status_filter)
+            return model, select(model), criteria, SupportMessage.created_at.desc()
+        if view == "broadcasts":
+            model = Broadcast
+            if query:
+                criteria.append(
+                    or_(
+                        cast(Broadcast.id, String).contains(query, autoescape=True),
+                        Broadcast.body.contains(query, autoescape=True),
+                    )
+                )
+            if status_filter:
+                criteria.append(Broadcast.status == status_filter)
+            return model, select(model), criteria, Broadcast.created_at.desc()
+        if view == "broadcast_deliveries":
+            model = BroadcastDelivery
+            if query:
+                criteria.append(
+                    or_(
+                        cast(BroadcastDelivery.id, String).contains(query, autoescape=True),
+                        cast(BroadcastDelivery.broadcast_id, String).contains(
+                            query, autoescape=True
+                        ),
+                        cast(BroadcastDelivery.user_id, String).contains(query, autoescape=True),
+                    )
+                )
+            if status_filter:
+                criteria.append(BroadcastDelivery.status == status_filter)
+            return model, select(model), criteria, BroadcastDelivery.created_at.desc()
         raise ValueError("Noma’lum admin moduli")
 
 

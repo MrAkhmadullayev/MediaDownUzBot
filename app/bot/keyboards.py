@@ -21,7 +21,12 @@ REMOVE_KEYBOARD = ReplyKeyboardRemove()
 
 
 def main_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text="ℹ️ Yordam")]]
+    rows = [
+        [
+            KeyboardButton(text="ℹ️ Yordam"),
+            KeyboardButton(text="💬 Qo‘llab-quvvatlash"),
+        ]
+    ]
     if is_admin:
         rows.append([KeyboardButton(text="📊 Admin panel")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
@@ -139,3 +144,58 @@ def admin_link_keyboard(url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🔐 Admin panelni ochish", url=url)]]
     )
+
+
+def support_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✍️ Murojaat qilish", callback_data="support:new")],
+            [InlineKeyboardButton(text="🕘 Murojaatlar tarixi", callback_data="support:history")],
+        ]
+    )
+
+
+def support_history_keyboard(
+    tickets: list[tuple[uuid.UUID, str, str]],
+    page: int,
+    pages: int,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{status} #{str(ticket_id)[:8]} · {updated_at}",
+                callback_data=f"support:view:{ticket_id}",
+            )
+        ]
+        for ticket_id, status, updated_at in tickets
+    ]
+    pagination = []
+    if page > 1:
+        pagination.append(
+            InlineKeyboardButton(text="‹ Oldingi", callback_data=f"support:history:{page - 1}")
+        )
+    if page < pages:
+        pagination.append(
+            InlineKeyboardButton(text="Keyingi ›", callback_data=f"support:history:{page + 1}")
+        )
+    if pagination:
+        rows.append(pagination)
+    rows.append([InlineKeyboardButton(text="✍️ Murojaat qilish", callback_data="support:new")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def support_ticket_keyboard(ticket_id: uuid.UUID, can_reply: bool = True) -> InlineKeyboardMarkup:
+    rows = []
+    if can_reply:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="↩️ Shu murojaatga javob yozish",
+                    callback_data=f"support:reply:{ticket_id}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="🕘 Barcha murojaatlar", callback_data="support:history")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)

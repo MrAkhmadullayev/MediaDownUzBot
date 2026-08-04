@@ -21,11 +21,14 @@ from app.bot.keyboards import (
     audio_quality_keyboard,
     main_keyboard,
     registration_confirmation,
+    support_history_keyboard,
+    support_menu_keyboard,
+    support_ticket_keyboard,
     video_quality_keyboard,
 )
-from app.bot.states import RegistrationState
+from app.bot.states import RegistrationState, SupportState
 from app.config import Settings
-from app.enums import JobStatus, MediaType
+from app.enums import JobStatus, MediaType, SupportSender, SupportTicketStatus
 from app.messages import (
     ADMIN_DENIED,
     ADMIN_LINK,
@@ -45,7 +48,13 @@ from app.messages import (
     WELCOME,
     job_error_message,
 )
-from app.repositories import AdminRepository, JobRepository, UserRepository
+from app.models import SupportTicket
+from app.repositories import (
+    AdminRepository,
+    JobRepository,
+    SupportRepository,
+    UserRepository,
+)
 from app.services.crypto import FieldCipher, create_token, token_hash
 from app.services.limits import estimated_size_for, exceeds_upload_limit
 from app.services.locks import acquire_active_job, active_job_key, release_active_job
@@ -181,7 +190,6 @@ async def cancel_registration(callback: CallbackQuery, state: FSMContext) -> Non
         await callback.message.answer(REGISTRATION_CANCELLED, reply_markup=REMOVE_KEYBOARD)
 
 
-@router.message(Command("admin"))
 @router.message(F.text == "📊 Admin panel")
 async def admin_panel(
     message: Message,
@@ -221,7 +229,12 @@ async def cancel_active_command(
     db_session: AsyncSession,
     redis: Redis,
 ) -> None:
-    if await state.get_state():
+    current_state = await state.get_state()
+    if current_state == SupportState.waiting_message.state:
+        await state.clear()
+        await message.answer("✅ Murojaat yozish bekor qilindi.")
+        return
+    if current_state:
         await state.clear()
         await message.answer(REGISTRATION_CANCELLED, reply_markup=REMOVE_KEYBOARD)
         return
@@ -238,6 +251,241 @@ async def cancel_active_command(
         await db_session.commit()
     await release_active_job(redis, message.from_user.id, job_id)
     await message.answer(JOB_CANCELLED)
+
+
+@router.message(F.text == "💬 Qo‘llab-quvvatlash")
+async def support_menu(
+    message: Message,
+    db_session: AsyncSession,
+) -> None:
+    user = await touch_user(message, db_session)
+    if user is None or not user.is_registered:
+        await message.answer(REGISTRATION_REQUIRED, reply_markup=CONTACT_KEYBOARD)
+        return
+    await message.answer(
+        "💬 <b>Qo‘llab-quvvatlash markazi</b>\n\n"
+        "Savolingiz yoki muammoingiz bo‘lsa, murojaat yozing. "
+        "Javob shu bot orqali keladi va suhbatni davom ettirishingiz mumkin.",
+        reply_markup=support_menu_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "support:new")
+async def start_support_message(
+    callback: CallbackQuery,
+    state: FSMContext,
+    db_session: AsyncSession,
+) -> None:
+    user = await UserRepository.get(db_session, callback.from_user.id)
+    if user is None or not user.is_registered:
+        await callback.answer("Avval ro‘yxatdan o‘ting", show_alert=True)
+        return
+    ticket = await SupportRepository.get_open(db_session, user.telegram_id)
+    await state.set_state(SupportState.waiting_message)
+    await state.update_data(support_ticket_id=str(ticket.id) if ticket else "")
+    await callback.answer()
+    if callback.message:
+        await callback.message.answer(
+            "✍️ <b>Murojaatingizni yozing</b>\n\n"
+            "Muammoni imkon qadar aniq tushuntiring. Bitta xabarda 3 500 belgigacha "
+            "matn yuborishingiz mumkin.\n\n"
+            "Bekor qilish uchun /cancel buyrug‘ini yuboring."
+        )
+
+
+@router.callback_query(F.data.startswith("support:history"))
+async def support_history(
+    callback: CallbackQuery,
+    db_session: AsyncSession,
+) -> None:
+    user = await UserRepository.get(db_session, callback.from_user.id)
+    if user is None or not user.is_registered:
+        await callback.answer("Avval ro‘yxatdan o‘ting", show_alert=True)
+        return
+    raw_page = (callback.data or "").removeprefix("support:history:")
+    page = int(raw_page) if raw_page.isdigit() else 1
+    ticket_page = await SupportRepository.list_owned(db_session, user.telegram_id, page)
+    await callback.answer()
+    if callback.message is None:
+        return
+    if not ticket_page.items:
+        await callback.message.answer(
+            "🕘 <b>Murojaatlar tarixi</b>\n\nHozircha murojaatlaringiz yo‘q.",
+            reply_markup=support_menu_keyboard(),
+        )
+        return
+    buttons = [
+        (
+            ticket.id,
+            "🟢 Ochiq" if ticket.status == SupportTicketStatus.OPEN else "⚪️ Yopilgan",
+            ticket.updated_at.strftime("%d.%m.%Y"),
+        )
+        for ticket in ticket_page.items
+    ]
+    await callback.message.answer(
+        "🕘 <b>Murojaatlar tarixi</b>\n\n"
+        f"Jami {ticket_page.total} ta murojaat · {ticket_page.page}/{ticket_page.pages}-sahifa.",
+        reply_markup=support_history_keyboard(buttons, ticket_page.page, ticket_page.pages),
+    )
+
+
+@router.callback_query(F.data.startswith("support:view:"))
+async def view_support_ticket(
+    callback: CallbackQuery,
+    db_session: AsyncSession,
+) -> None:
+    ticket_id = parse_uuid((callback.data or "").removeprefix("support:view:"))
+    ticket = (
+        await SupportRepository.get_owned(db_session, ticket_id, callback.from_user.id)
+        if ticket_id
+        else None
+    )
+    if ticket is None:
+        await callback.answer("Murojaat topilmadi", show_alert=True)
+        return
+    await callback.answer()
+    if callback.message:
+        pages = render_support_ticket_pages(ticket)
+        for index, page_text in enumerate(pages):
+            await callback.message.answer(
+                page_text,
+                reply_markup=(
+                    support_ticket_keyboard(ticket.id) if index == len(pages) - 1 else None
+                ),
+            )
+
+
+@router.callback_query(F.data.startswith("support:reply:"))
+async def reply_to_support_ticket(
+    callback: CallbackQuery,
+    state: FSMContext,
+    db_session: AsyncSession,
+) -> None:
+    ticket_id = parse_uuid((callback.data or "").removeprefix("support:reply:"))
+    ticket = (
+        await SupportRepository.get_owned(db_session, ticket_id, callback.from_user.id)
+        if ticket_id
+        else None
+    )
+    if ticket is None:
+        await callback.answer("Murojaat topilmadi", show_alert=True)
+        return
+    await state.set_state(SupportState.waiting_message)
+    await state.update_data(support_ticket_id=str(ticket.id))
+    await callback.answer()
+    if callback.message:
+        await callback.message.answer(
+            f"↩️ <b>#{str(ticket.id)[:8]} murojaatiga javob yozing.</b>\n\n"
+            "Bekor qilish uchun /cancel buyrug‘ini yuboring."
+        )
+
+
+@router.message(SupportState.waiting_message, F.text)
+async def receive_support_message(
+    message: Message,
+    state: FSMContext,
+    db_session: AsyncSession,
+    task_queue: Celery,
+) -> None:
+    user = await touch_user(message, db_session)
+    data = await state.get_data()
+    ticket_id = parse_uuid(data.get("support_ticket_id"))
+    body = (message.text or "").strip()
+    if user is None or not user.is_registered:
+        await state.clear()
+        await message.answer("❌ Murojaat sessiyasi eskirgan. Qaytadan urinib ko‘ring.")
+        return
+    if not body:
+        await message.answer("❌ Bo‘sh murojaat yuborib bo‘lmaydi.")
+        return
+    if len(body) > 3500:
+        await message.answer("❌ Xabar 3 500 belgidan oshmasligi kerak.")
+        return
+    ticket = (
+        await SupportRepository.get_owned(db_session, ticket_id, user.telegram_id)
+        if ticket_id
+        else await SupportRepository.get_or_create_open(db_session, user.telegram_id)
+    )
+    if ticket is None:
+        await state.clear()
+        await message.answer("❌ Murojaat topilmadi. Qaytadan murojaat yarating.")
+        return
+    support_message = await SupportRepository.add_message(
+        db_session, ticket, SupportSender.USER, body
+    )
+    await db_session.commit()
+    await state.clear()
+    try:
+        task_queue.send_task(
+            "notifications.support.notify_admins",
+            args=[str(support_message.id)],
+            queue="notifications",
+        )
+    except Exception as exc:
+        logger.error(
+            "support_notification_enqueue_failed",
+            extra={"message_id": str(support_message.id), "error_type": type(exc).__name__},
+        )
+    await message.answer(
+        "✅ <b>Murojaatingiz qabul qilindi</b>\n\n"
+        f"🎫 Raqami: <code>#{str(ticket.id)[:8]}</code>\n"
+        "Administrator javobi shu yerga keladi.",
+        reply_markup=support_ticket_keyboard(ticket.id),
+    )
+
+
+@router.message(SupportState.waiting_message)
+async def support_text_required(message: Message) -> None:
+    await message.answer("ℹ️ Murojaatni matn ko‘rinishida yuboring.")
+
+
+@router.message(StateFilter(None), F.reply_to_message, F.text)
+async def continue_support_by_reply(
+    message: Message,
+    db_session: AsyncSession,
+    task_queue: Celery,
+) -> None:
+    user = await touch_user(message, db_session)
+    replied_message = message.reply_to_message
+    body = (message.text or "").strip()
+    ticket = (
+        await SupportRepository.find_owned_by_admin_message(
+            db_session, user.telegram_id, replied_message.message_id
+        )
+        if user and user.is_registered and replied_message
+        else None
+    )
+    if ticket is None:
+        await message.answer(
+            "ℹ️ Bu xabar qo‘llab-quvvatlash javobi emas. "
+            "Murojaat uchun «Qo‘llab-quvvatlash» bo‘limidan foydalaning."
+        )
+        return
+    if not body:
+        await message.answer("❌ Bo‘sh javob yuborib bo‘lmaydi.")
+        return
+    if len(body) > 3500:
+        await message.answer("❌ Xabar 3 500 belgidan oshmasligi kerak.")
+        return
+    support_message = await SupportRepository.add_message(
+        db_session, ticket, SupportSender.USER, body
+    )
+    await db_session.commit()
+    try:
+        task_queue.send_task(
+            "notifications.support.notify_admins",
+            args=[str(support_message.id)],
+            queue="notifications",
+        )
+    except Exception as exc:
+        logger.error(
+            "support_notification_enqueue_failed",
+            extra={"message_id": str(support_message.id), "error_type": type(exc).__name__},
+        )
+    await message.answer(
+        "✅ Javobingiz murojaatga qo‘shildi. Administratorga yuborildi.",
+        reply_markup=support_ticket_keyboard(ticket.id),
+    )
 
 
 @router.callback_query(F.data.startswith("type:"))
@@ -442,12 +690,57 @@ def normalize_phone(raw_phone: str) -> str | None:
 
 
 def parse_job_id(value: object) -> uuid.UUID | None:
+    return parse_uuid(value)
+
+
+def parse_uuid(value: object) -> uuid.UUID | None:
     if not isinstance(value, str):
         return None
     try:
         return uuid.UUID(value)
     except ValueError:
         return None
+
+
+def render_support_ticket_pages(ticket: SupportTicket) -> list[str]:
+    status = "🟢 Ochiq" if ticket.status == SupportTicketStatus.OPEN else "⚪️ Yopilgan"
+    entries: list[str] = []
+    for item in ticket.messages:
+        sender = "👤 Siz" if item.sender == SupportSender.USER else "🛡 Administrator"
+        timestamp = item.created_at.strftime("%d.%m.%Y · %H:%M")
+        chunks = [item.body[index : index + 500] for index in range(0, len(item.body), 500)]
+        for chunk_index, chunk in enumerate(chunks or [""]):
+            label = sender if chunk_index == 0 else f"{sender} · davomi"
+            entries.append(f"<b>{label}</b> · <i>{timestamp}</i>\n{html.escape(chunk)}")
+
+    buckets: list[list[str]] = [[]]
+    bucket_length = 0
+    for entry in entries:
+        extra_length = len(entry) + (2 if buckets[-1] else 0)
+        if buckets[-1] and bucket_length + extra_length > 3400:
+            buckets.append([])
+            bucket_length = 0
+            extra_length = len(entry)
+        buckets[-1].append(entry)
+        bucket_length += extra_length
+
+    if not entries:
+        buckets = [["ℹ️ Bu murojaatda hali xabar yo‘q."]]
+    page_count = len(buckets)
+    pages = []
+    for index, bucket in enumerate(buckets, start=1):
+        page_label = f" · {index}/{page_count}" if page_count > 1 else ""
+        header = (
+            f"💬 <b>Murojaat tafsilotlari{page_label}</b>\n\n"
+            f"🎫 <code>#{str(ticket.id)[:8]}</code> · {status}\n"
+            f"📅 {ticket.created_at.strftime('%d.%m.%Y · %H:%M')}"
+        )
+        pages.append(f"{header}\n\n" + "\n\n".join(bucket))
+    return pages
+
+
+def render_support_ticket(ticket: SupportTicket) -> str:
+    return render_support_ticket_pages(ticket)[0]
 
 
 def valid_quality(media_type: MediaType, quality: str) -> bool:

@@ -1,6 +1,27 @@
 import uuid
 
-from app.bot.keyboards import audio_quality_keyboard, video_quality_keyboard
+from app.bot.keyboards import (
+    audio_quality_keyboard,
+    main_keyboard,
+    support_menu_keyboard,
+    video_quality_keyboard,
+)
+
+
+def test_main_keyboard_exposes_help_and_support() -> None:
+    markup = main_keyboard(is_admin=False)
+
+    assert [button.text for button in markup.keyboard[0]] == [
+        "ℹ️ Yordam",
+        "💬 Qo‘llab-quvvatlash",
+    ]
+
+
+def test_support_menu_contains_new_request_and_history() -> None:
+    markup = support_menu_keyboard()
+
+    assert markup.inline_keyboard[0][0].callback_data == "support:new"
+    assert markup.inline_keyboard[1][0].callback_data == "support:history"
 
 
 def test_video_quality_keyboard_includes_estimated_size() -> None:

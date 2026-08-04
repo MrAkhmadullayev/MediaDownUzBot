@@ -4,13 +4,13 @@
 
 | Komponent | Vazifa |
 |---|---|
-| `bot` | Telegram polling, ro‘yxatdan o‘tish, URL va YouTube format tanlovi |
-| `worker` | yt-dlp, gallery-dl, Deno EJS va FFmpeg orqali media tahlili, yuklash, konvertatsiya va Telegram upload |
+| `bot` | Telegram polling, ro‘yxatdan o‘tish, URL va YouTube format tanlovi, foydalanuvchi murojaatlari |
+| `worker` | `media` navbatida media ishlari, `notifications` navbatida support javoblari va ommaviy xabarlarni yetkazish |
 | `youtube-pot-provider` | YouTube JavaScript challenge’lari uchun ichki PO-token xizmati |
 | `telegram-bot-api` | Telegram bilan lokal Bot API aloqa qatlami va 2 GB gacha upload |
 | `scheduler` | Qolib ketgan vaqtinchalik media kataloglarini tozalash |
-| `admin` | FastAPI asosidagi statistika paneli va health endpointlar |
-| `postgres` | Foydalanuvchi, vazifa, admin token, media metama’lumoti va Telegram `file_id` keshi |
+| `admin` | FastAPI asosidagi statistika, murojaatlar va ommaviy xabarlar paneli hamda health endpointlar |
+| `postgres` | Foydalanuvchi, vazifa, admin token, media keshi, murojaat, support xabari va broadcast audit ma’lumotlari |
 | `redis` | FSM holati, foydalanuvchi va bir xil media locklari, Celery broker |
 | `nginx` | Admin panel reverse proxy va login rate limit |
 
@@ -31,6 +31,22 @@
 13. Mos bitta video yoki audio uchun Telegram qaytargan `file_id` bazada saqlanadi va job `success` holatiga o‘tadi.
 14. Manba URL bazadan o‘chiriladi, Redis lock bo‘shatiladi va vaqtinchalik katalog tozalanadi.
 
+## Qo‘llab-quvvatlash oqimi
+
+1. Foydalanuvchi `💬 Qo‘llab-quvvatlash` tugmasidan yangi murojaat yozadi yoki tarixdan avvalgi murojaatni ochadi.
+2. Xabar `support_tickets` va `support_messages` jadvallariga yozilgach, administratorlarga `notifications` navbati orqali bildirishnoma keladi.
+3. Administrator dashboarddagi suhbat oynasidan javob beradi. Javob bazaga avval `pending` holatida yoziladi, keyin worker Telegram’ga yuboradi va `sent` yoki `failed` holatini saqlaydi.
+4. Foydalanuvchi botdagi javob xabariga Telegram `Reply` orqali javob bersa, `telegram_message_id` bo‘yicha aynan o‘sha murojaat topiladi. Yangi ticket ochilmaydi.
+5. Yopilgan murojaatga foydalanuvchi yana yozsa, u qayta ochiladi va suhbat tarixi saqlanib qoladi.
+
+## Ommaviy xabar oqimi
+
+1. Administrator dashboardda matnni tasdiqlaydi.
+2. Shu vaqtdagi barcha ro‘yxatdan o‘tgan va faol foydalanuvchilar `broadcast_deliveries` jadvaliga snapshot qilinadi.
+3. `notifications` navbatidagi worker Telegram limitlarini hisobga olib foydalanuvchilarga ketma-ket yuboradi.
+4. Har bir oluvchi uchun `pending`, `sending`, `sent` yoki `failed` natijasi saqlanadi; dashboard jami, yetkazilgan va xato sonini ko‘rsatadi.
+5. Qisman yoki to‘liq xato bo‘lsa administrator faqat yetkazilmagan oluvchilar uchun qayta urinishni ishga tushiradi.
+
 ## Vazifa holatlari
 
 ```text
@@ -46,7 +62,7 @@ Status faqat tegishli foydalanuvchiga bog‘langan UUID orqali o‘zgartiriladi.
 
 ## Parallel ishlash
 
-Botning event loopi og‘ir media ishlarini bajarmaydi. `yt-dlp`, `gallery-dl`, pinlangan Deno, PO-token client va FFmpeg Celery workerda ishlaydi. Alohida pinlangan `youtube-pot-provider` konteyneri faqat Compose ichki tarmog‘ida xizmat qiladi. Har worker jarayonida bir vaqtda bitta task bajariladi, konteynerdagi jarayonlar soni `WORKER_CONCURRENCY` orqali boshqariladi. Celery `acks_late`, `task_reject_on_worker_lost` va `prefetch=1` bilan sozlangan.
+Botning event loopi og‘ir media yoki ommaviy yetkazish ishlarini bajarmaydi. `yt-dlp`, `gallery-dl`, pinlangan Deno, PO-token client va FFmpeg Celery workerda ishlaydi. Support va broadcast vazifalari `notifications`, media vazifalari `media` navbatiga yuboriladi. Alohida pinlangan `youtube-pot-provider` konteyneri faqat Compose ichki tarmog‘ida xizmat qiladi. Har worker jarayonida bir vaqtda bitta task bajariladi, konteynerdagi jarayonlar soni `WORKER_CONCURRENCY` orqali boshqariladi. Celery `acks_late`, `task_reject_on_worker_lost` va `prefetch=1` bilan sozlangan.
 
 Lokal Bot API konteynerining `8081` porti hostga publish qilinmaydi. Bot va worker unga faqat Compose ichki tarmog‘i orqali ulanadi. Worker `videos` volume’iga yozadi, lokal Bot API esa uni read-only rejimda ko‘radi va `file://` yo‘li orqali faylni bevosita o‘qiydi. Muvaffaqiyat yoki xatolikdan keyin worker katalogi avtomatik tozalanadi.
 

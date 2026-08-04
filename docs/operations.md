@@ -13,6 +13,8 @@ docker compose logs --since=15m telegram-bot-api youtube-pot-provider admin bot 
 
 Media ishlash vaqtini ajratib ko‘rish uchun worker logidagi `stage`, `elapsed_seconds`, `size_bytes` va `cache_hit` maydonlaridan foydalaning. Asosiy bosqichlar `probe`, `analysis`, `download`, `upload`, `cache_send` va `total`. `cache_hit=true` bo‘lgan so‘rovda manbadan download va FFmpeg ishlamaydi.
 
+Support yoki ommaviy xabar yetkazilmasa admin dashboarddagi delivery holati va `worker` logini tekshiring. `failed` javobni yoki broadcastni paneldan qayta urinish mumkin. Telegram botni bloklagan foydalanuvchi avtomatik `is_active=false` holatiga o‘tadi va keyingi ommaviy xabarlar snapshotiga kiritilmaydi.
+
 ## Capacity
 
 Aniq bir vaqtdagi foydalanuvchi soni server CPU, RAM, tarmoq, video hajmi va manba tezligiga bog‘liq. `WORKER_CONCURRENCY=4` bir worker konteynerida to‘rtta media taskni parallel bajaradi. Navbatdagi foydalanuvchilar botni ishlatishda davom etadi va Celery navbatida kutadi.

@@ -3,12 +3,24 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.enums import JobStatus, MediaType, Platform
+from app.enums import (
+    BroadcastStatus,
+    DeliveryStatus,
+    JobStatus,
+    MediaType,
+    Platform,
+    SupportSender,
+    SupportTicketStatus,
+)
 from app.models import (
     AdminLoginToken,
     AdminSession,
+    Broadcast,
+    BroadcastDelivery,
     DownloadJob,
     MediaSourceCache,
+    SupportMessage,
+    SupportTicket,
     TelegramFileCache,
     User,
 )
@@ -25,6 +37,26 @@ STATUS_LABELS = {
     JobStatus.SUCCESS: "Muvaffaqiyatli",
     JobStatus.ERROR: "Xatolik",
     JobStatus.CANCELLED: "Bekor qilingan",
+}
+
+SUPPORT_STATUS_LABELS = {
+    SupportTicketStatus.OPEN: "Ochiq",
+    SupportTicketStatus.CLOSED: "Yopilgan",
+}
+
+DELIVERY_STATUS_LABELS = {
+    DeliveryStatus.PENDING: "Kutilmoqda",
+    DeliveryStatus.SENDING: "Yuborilmoqda",
+    DeliveryStatus.SENT: "Yuborildi",
+    DeliveryStatus.FAILED: "Xatolik",
+}
+
+BROADCAST_STATUS_LABELS = {
+    BroadcastStatus.PENDING: "Kutilmoqda",
+    BroadcastStatus.PROCESSING: "Yuborilmoqda",
+    BroadcastStatus.COMPLETED: "Yakunlandi",
+    BroadcastStatus.PARTIAL: "Qisman yakunlandi",
+    BroadcastStatus.FAILED: "Xatolik",
 }
 
 MODULES = (
@@ -64,6 +96,30 @@ MODULES = (
         "description": "Faol va muddati tugagan boshqaruv sessiyalari",
         "icon": "shield-check",
     },
+    {
+        "key": "support_tickets",
+        "label": "Murojaatlar",
+        "description": "Foydalanuvchi murojaatlari va ularning holati",
+        "icon": "message-square",
+    },
+    {
+        "key": "support_messages",
+        "label": "Murojaat xabarlari",
+        "description": "Murojaatlardagi foydalanuvchi va admin yozishmalari",
+        "icon": "messages-square",
+    },
+    {
+        "key": "broadcasts",
+        "label": "Ommaviy xabarlar",
+        "description": "Barcha foydalanuvchilarga yuborilgan e’lonlar",
+        "icon": "megaphone",
+    },
+    {
+        "key": "broadcast_deliveries",
+        "label": "Xabar yetkazilishi",
+        "description": "Ommaviy xabarlarning har bir foydalanuvchiga holati",
+        "icon": "send",
+    },
 )
 
 
@@ -79,8 +135,31 @@ def present_table(view: str, items: list[Any]) -> tuple[list[str], list[list[dic
         "telegram_file_cache": _present_files,
         "admin_login_tokens": _present_login_tokens,
         "admin_sessions": _present_sessions,
+        "support_tickets": _present_support_tickets,
+        "support_messages": _present_support_messages,
+        "broadcasts": _present_broadcasts,
+        "broadcast_deliveries": _present_broadcast_deliveries,
     }
     return presenters[view](items)
+
+
+def status_options_for(view: str) -> list[tuple[str, str]]:
+    mappings = {
+        "download_jobs": STATUS_LABELS,
+        "support_tickets": SUPPORT_STATUS_LABELS,
+        "support_messages": DELIVERY_STATUS_LABELS,
+        "broadcasts": BROADCAST_STATUS_LABELS,
+        "broadcast_deliveries": DELIVERY_STATUS_LABELS,
+    }
+    mapping = mappings.get(view, {})
+    return [(status.value, label) for status, label in mapping.items()]
+
+
+def format_datetime(value: datetime | None) -> str:
+    if value is None:
+        return "—"
+    aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    return aware.astimezone(TASHKENT).strftime("%d.%m.%Y · %H:%M")
 
 
 def _cell(value: object, kind: str = "text", tone: str = "") -> dict[str, str]:
@@ -96,8 +175,7 @@ def _text(value: object) -> str:
 def _datetime(value: datetime | None) -> dict[str, str]:
     if value is None:
         return _cell(None, "muted")
-    aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value
-    return _cell(aware.astimezone(TASHKENT).strftime("%d.%m.%Y · %H:%M:%S"), "time")
+    return _cell(format_datetime(value), "time")
 
 
 def _boolean(value: bool, true_label: str = "Ha", false_label: str = "Yo‘q") -> dict[str, str]:
@@ -374,4 +452,130 @@ def _present_sessions(
                 _datetime(item.created_at),
             ]
         )
+    return columns, rows
+
+
+def _present_support_tickets(
+    items: list[SupportTicket],
+) -> tuple[list[str], list[list[dict[str, str]]]]:
+    columns = [
+        "Murojaat ID",
+        "User ID",
+        "Holat",
+        "Yaratilgan",
+        "Yangilangan",
+        "Yopilgan",
+    ]
+    rows = [
+        [
+            _cell(item.id, "code"),
+            _cell(item.user_id, "code"),
+            _cell(SUPPORT_STATUS_LABELS[item.status], "badge", item.status.value),
+            _datetime(item.created_at),
+            _datetime(item.updated_at),
+            _datetime(item.closed_at),
+        ]
+        for item in items
+    ]
+    return columns, rows
+
+
+def _present_support_messages(
+    items: list[SupportMessage],
+) -> tuple[list[str], list[list[dict[str, str]]]]:
+    columns = [
+        "Xabar ID",
+        "Murojaat ID",
+        "Yuboruvchi",
+        "Xabar",
+        "Yetkazilish",
+        "Telegram xabar ID",
+        "Xato",
+        "Yaratilgan",
+        "Yuborilgan",
+    ]
+    rows = [
+        [
+            _cell(item.id, "code"),
+            _cell(item.ticket_id, "code"),
+            _cell(
+                "Administrator" if item.sender == SupportSender.ADMIN else "Foydalanuvchi",
+                "badge",
+                "protected" if item.sender == SupportSender.ADMIN else "neutral",
+            ),
+            _cell(item.body, "wrap"),
+            _cell(
+                DELIVERY_STATUS_LABELS[item.delivery_status],
+                "badge",
+                item.delivery_status.value,
+            ),
+            _cell(item.telegram_message_id, "code"),
+            _cell(item.error_detail, "wrap"),
+            _datetime(item.created_at),
+            _datetime(item.sent_at),
+        ]
+        for item in items
+    ]
+    return columns, rows
+
+
+def _present_broadcasts(
+    items: list[Broadcast],
+) -> tuple[list[str], list[list[dict[str, str]]]]:
+    columns = [
+        "Xabar ID",
+        "Xabar",
+        "Holat",
+        "Jami",
+        "Yuborildi",
+        "Xatolik",
+        "Admin Telegram ID",
+        "Yaratilgan",
+        "Boshlangan",
+        "Yakunlangan",
+    ]
+    rows = [
+        [
+            _cell(item.id, "code"),
+            _cell(item.body, "wrap"),
+            _cell(BROADCAST_STATUS_LABELS[item.status], "badge", item.status.value),
+            _cell(item.total_count, "number"),
+            _cell(item.sent_count, "number"),
+            _cell(item.failed_count, "number"),
+            _cell(item.created_by, "code"),
+            _datetime(item.created_at),
+            _datetime(item.started_at),
+            _datetime(item.completed_at),
+        ]
+        for item in items
+    ]
+    return columns, rows
+
+
+def _present_broadcast_deliveries(
+    items: list[BroadcastDelivery],
+) -> tuple[list[str], list[list[dict[str, str]]]]:
+    columns = [
+        "Yetkazilish ID",
+        "Ommaviy xabar ID",
+        "User ID",
+        "Holat",
+        "Telegram xabar ID",
+        "Xato",
+        "Yaratilgan",
+        "Yuborilgan",
+    ]
+    rows = [
+        [
+            _cell(item.id, "code"),
+            _cell(item.broadcast_id, "code"),
+            _cell(item.user_id, "code"),
+            _cell(DELIVERY_STATUS_LABELS[item.status], "badge", item.status.value),
+            _cell(item.telegram_message_id, "code"),
+            _cell(item.error_detail, "wrap"),
+            _datetime(item.created_at),
+            _datetime(item.sent_at),
+        ]
+        for item in items
+    ]
     return columns, rows

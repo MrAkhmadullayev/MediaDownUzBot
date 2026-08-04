@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="color-scheme" content="light dark">
-  <title>{{ current_module.label }} · MediaDownUzBot</title>
+  <title>Boshqaruv markazi · MediaDownUzBot</title>
   <link rel="stylesheet" href="/static/admin.css">
   <script src="/static/admin.js" defer></script>
 </head>
@@ -18,9 +18,20 @@
         <span><strong>MediaDownUzBot</strong><small>Boshqaruv markazi</small></span>
       </div>
       <nav class="side-nav">
+        <p class="nav-label">Amallar</p>
+        <a class="nav-item" href="#support">
+          {{ icon('messages-square') }}
+          <span>Murojaatlar</span>
+          <span class="nav-count{% if open_support_count %} attention{% endif %}">{{ open_support_count }}</span>
+        </a>
+        <a class="nav-item" href="#broadcasts">
+          {{ icon('megaphone') }}
+          <span>Ommaviy xabar</span>
+          <span class="nav-count">{{ active_recipient_count }}</span>
+        </a>
         <p class="nav-label">Ma’lumotlar bazasi</p>
         {% for module in modules %}
-        <a class="nav-item{% if module.key == selected_view %} active{% endif %}" href="/admin?view={{ module.key }}&page_size={{ table_page.page_size }}"{% if module.key == selected_view %} aria-current="page"{% endif %}>
+        <a class="nav-item{% if module.key == selected_view %} active{% endif %}" href="/admin?view={{ module.key }}&page_size={{ table_page.page_size }}#database"{% if module.key == selected_view %} aria-current="page"{% endif %}>
           {{ icon(module.icon) }}
           <span>{{ module.label }}</span>
           <span class="nav-count">{{ module.count }}</span>
@@ -37,7 +48,7 @@
       <header class="topbar">
         <div class="topbar-title">
           <span class="mobile-brand">{{ icon('menu') }}</span>
-          <div><p>Admin panel</p><h1>{{ current_module.label }}</h1></div>
+          <div><p>Admin panel</p><h1>Boshqaruv markazi</h1></div>
         </div>
         <div class="topbar-actions">
           <button class="icon-button" type="button" data-theme-toggle aria-label="Rang rejimini almashtirish" aria-pressed="false">
@@ -52,11 +63,18 @@
       </header>
 
       <main class="content">
+        {% if notice_message %}
+        <div class="notice notice-{{ notice_tone }}" role="status">
+          {% if notice_tone == 'success' %}{{ icon('circle-check') }}{% elif notice_tone == 'error' %}{{ icon('circle-x') }}{% else %}{{ icon('clock') }}{% endif %}
+          <span>{{ notice_message }}</span>
+        </div>
+        {% endif %}
+
         <section class="page-heading">
           <div>
             <div class="eyebrow"><span class="health-dot"></span> Jonli ma’lumotlar</div>
             <h2>Tizim ko‘rsatkichlari</h2>
-            <p>Foydalanuvchilar, media jarayonlari va saqlangan tizim yozuvlari.</p>
+            <p>Foydalanuvchilar, media jarayonlari va boshqaruv amallari bir joyda.</p>
           </div>
           <a class="button button-outline" href="/admin?view={{ selected_view }}&page_size={{ table_page.page_size }}">{{ icon('refresh-cw') }} Yangilash</a>
         </section>
@@ -70,9 +88,138 @@
           <article class="stat-card"><span class="stat-icon muted">{{ icon('ban') }}</span><div><p>Bekor qilingan</p><strong>{{ stats.cancelled }}</strong></div></article>
         </section>
 
+        <section class="operation-card" id="support">
+          <div class="operation-header">
+            <div class="data-title">
+              <span class="module-icon">{{ icon('messages-square') }}</span>
+              <div><h2>Qo‘llab-quvvatlash</h2><p>Foydalanuvchi murojaatlari va javoblar tarixi.</p></div>
+            </div>
+            <span class="record-count">{{ open_support_count }} ta ochiq</span>
+          </div>
+          <div class="support-layout">
+            <aside class="ticket-list" aria-label="Murojaatlar ro‘yxati">
+              {% for item in support_tickets %}
+              <a class="ticket-item{% if active_ticket and active_ticket.id == item.id %} active{% endif %}" href="/admin?ticket={{ item.id }}#support">
+                <span class="ticket-avatar">{{ (item.user.first_name or '?')[:1]|upper }}</span>
+                <span class="ticket-summary">
+                  <strong>{{ item.user.first_name }} {{ item.user.last_name or '' }}</strong>
+                  <small>{% if item.user.username %}@{{ item.user.username }} · {% endif %}#{{ item.id|string|truncate(8, true, '') }}</small>
+                </span>
+                <span class="ticket-meta">
+                  <b class="status-dot status-{{ item.status.value }}" title="{% if item.status.value == 'open' %}Ochiq{% else %}Yopilgan{% endif %}"></b>
+                  <time>{{ format_datetime(item.updated_at) }}</time>
+                </span>
+              </a>
+              {% else %}
+              <div class="panel-empty">{{ icon('inbox') }}<strong>Murojaatlar yo‘q</strong><small>Yangi murojaatlar shu yerda ko‘rinadi.</small></div>
+              {% endfor %}
+            </aside>
+
+            <div class="conversation-panel">
+              {% if active_ticket %}
+              <div class="conversation-header">
+                <div>
+                  <span class="eyebrow">Murojaat #{{ active_ticket.id|string|truncate(8, true, '') }}</span>
+                  <h3>{{ active_ticket.user.first_name }} {{ active_ticket.user.last_name or '' }}</h3>
+                  <p>{% if active_ticket.user.username %}@{{ active_ticket.user.username }} · {% endif %}Telegram ID: {{ active_ticket.user_id }}</p>
+                </div>
+                <form method="post" action="/admin/support/{{ active_ticket.id }}/status">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  {% if active_ticket.status.value == 'open' %}
+                  <input type="hidden" name="status" value="closed">
+                  <button class="button button-outline" type="submit">{{ icon('x') }} Yopish</button>
+                  {% else %}
+                  <input type="hidden" name="status" value="open">
+                  <button class="button button-outline" type="submit">{{ icon('refresh-cw') }} Qayta ochish</button>
+                  {% endif %}
+                </form>
+              </div>
+              <div class="message-thread" aria-live="polite">
+                {% for message in active_ticket.messages %}
+                <article class="message-bubble message-{{ message.sender.value }}">
+                  <div class="message-author">
+                    <strong>{% if message.sender.value == 'admin' %}Administrator{% else %}Foydalanuvchi{% endif %}</strong>
+                    <time>{{ format_datetime(message.created_at) }}</time>
+                  </div>
+                  <p>{{ message.body }}</p>
+                  {% if message.sender.value == 'admin' %}
+                  <div class="delivery-row">
+                    <span class="delivery delivery-{{ message.delivery_status.value }}">
+                      {% if message.delivery_status.value == 'sent' %}Yetkazildi{% elif message.delivery_status.value == 'sending' %}Yuborilmoqda{% elif message.delivery_status.value == 'failed' %}Yetkazilmadi{% else %}Navbatda{% endif %}
+                    </span>
+                    {% if message.delivery_status.value == 'failed' %}
+                    <form method="post" action="/admin/support/messages/{{ message.id }}/retry">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <button class="inline-action" type="submit">Qayta yuborish</button>
+                    </form>
+                    {% endif %}
+                  </div>
+                  {% endif %}
+                </article>
+                {% else %}
+                <div class="panel-empty">{{ icon('message-square') }}<strong>Xabar yozilmagan</strong></div>
+                {% endfor %}
+              </div>
+              <form class="composer" method="post" action="/admin/support/{{ active_ticket.id }}/reply">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label for="support-reply">Javob</label>
+                <textarea id="support-reply" name="body" rows="4" minlength="1" maxlength="3500" required data-counter="support-counter" placeholder="Foydalanuvchiga aniq va tushunarli javob yozing…"></textarea>
+                <div class="composer-footer"><span id="support-counter">0 / 3500</span><button class="button button-primary" type="submit">{{ icon('send') }} Javob yuborish</button></div>
+              </form>
+              {% else %}
+              <div class="panel-empty panel-empty-large">{{ icon('inbox') }}<strong>Hali murojaat kelmagan</strong><small>Foydalanuvchi botdagi “Qo‘llab-quvvatlash” bo‘limidan yozishi mumkin.</small></div>
+              {% endif %}
+            </div>
+          </div>
+        </section>
+
+        <section class="operation-card" id="broadcasts">
+          <div class="operation-header">
+            <div class="data-title">
+              <span class="module-icon">{{ icon('megaphone') }}</span>
+              <div><h2>Barcha foydalanuvchilarga xabar</h2><p>Faol foydalanuvchilarga bir martalik e’lon yuboring.</p></div>
+            </div>
+            <span class="record-count">{{ active_recipient_count }} ta oluvchi</span>
+          </div>
+          <div class="broadcast-layout">
+            <form class="broadcast-composer" method="post" action="/admin/broadcasts" data-confirm="Xabar barcha faol foydalanuvchilarga yuborilsinmi?">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <label for="broadcast-body">Xabar matni</label>
+              <textarea id="broadcast-body" name="body" rows="8" minlength="1" maxlength="3500" required data-counter="broadcast-counter" placeholder="Yangilik yoki muhim e’lonni yozing…"></textarea>
+              <p class="form-hint">Xabar Telegram’da “Media Yukla xabari” sarlavhasi bilan ko‘rinadi. Faqat ro‘yxatdan o‘tgan faol foydalanuvchilarga yuboriladi.</p>
+              <div class="composer-footer"><span id="broadcast-counter">0 / 3500</span><button class="button button-primary" type="submit"{% if active_recipient_count == 0 %} disabled{% endif %}>{{ icon('send') }} {{ active_recipient_count }} foydalanuvchiga yuborish</button></div>
+            </form>
+            <div class="broadcast-history">
+              <h3>So‘nggi jo‘natmalar</h3>
+              <div class="broadcast-list">
+                {% for item in recent_broadcasts %}
+                <article class="broadcast-item">
+                  <div class="broadcast-item-head">
+                    <span class="badge badge-{{ item.status.value }}">{% if item.status.value == 'completed' %}Yakunlandi{% elif item.status.value == 'processing' %}Yuborilmoqda{% elif item.status.value == 'partial' %}Qisman yakunlandi{% elif item.status.value == 'failed' %}Xatolik{% else %}Navbatda{% endif %}</span>
+                    <time>{{ format_datetime(item.created_at) }}</time>
+                  </div>
+                  <p>{{ item.body }}</p>
+                  <div class="broadcast-progress" aria-label="{{ item.sent_count }} ta yuborildi, {{ item.failed_count }} ta xato">
+                    <span><b>{{ item.sent_count }}</b> yuborildi</span><span><b>{{ item.failed_count }}</b> xato</span><span><b>{{ item.total_count }}</b> jami</span>
+                  </div>
+                  {% if item.status.value in ['failed', 'partial', 'pending'] and item.total_count %}
+                  <form method="post" action="/admin/broadcasts/{{ item.id }}/retry" data-confirm="Yetkazilmagan xabarlar qayta yuborilsinmi?">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button class="inline-action" type="submit">{{ icon('refresh-cw') }} Yetkazilmaganlarga qayta yuborish</button>
+                  </form>
+                  {% endif %}
+                </article>
+                {% else %}
+                <div class="panel-empty">{{ icon('megaphone') }}<strong>Jo‘natmalar yo‘q</strong><small>Birinchi e’loningiz shu yerda ko‘rinadi.</small></div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="module-strip" aria-label="Ma’lumotlar modullari">
           {% for module in modules %}
-          <a class="module-card{% if module.key == selected_view %} active{% endif %}" href="/admin?view={{ module.key }}&page_size={{ table_page.page_size }}">
+          <a class="module-card{% if module.key == selected_view %} active{% endif %}" href="/admin?view={{ module.key }}&page_size={{ table_page.page_size }}#database">
             <span class="module-icon">{{ icon(module.icon) }}</span>
             <span><strong>{{ module.label }}</strong><small>{{ module.description }}</small></span>
             <b>{{ module.count }}</b>
@@ -80,7 +227,7 @@
           {% endfor %}
         </section>
 
-        <section class="data-card">
+        <section class="data-card" id="database">
           <div class="data-card-header">
             <div class="data-title">
               <span class="module-icon">{{ icon(current_module.icon) }}</span>
@@ -89,7 +236,7 @@
             <span class="record-count">{{ table_page.total }} ta yozuv</span>
           </div>
 
-          <form class="toolbar" method="get" action="/admin">
+          <form class="toolbar" method="get" action="/admin#database">
             <input type="hidden" name="view" value="{{ selected_view }}">
             <input type="hidden" name="page_size" value="{{ table_page.page_size }}">
             <label class="search-field">
@@ -97,7 +244,7 @@
               {{ icon('search') }}
               <input name="q" value="{{ query }}" maxlength="100" placeholder="ID, ism, sarlavha yoki xato bo‘yicha qidiring">
             </label>
-            {% if selected_view == 'download_jobs' %}
+            {% if status_options %}
             <label class="select-field">
               {{ icon('filter') }}
               <span class="sr-only">Holat</span>
@@ -117,7 +264,7 @@
             </label>
             {% endif %}
             <button class="button button-primary" type="submit">Qo‘llash</button>
-            {% if query or status_filter or platform_filter %}<a class="button button-ghost" href="/admin?view={{ selected_view }}&page_size={{ table_page.page_size }}">Tozalash</a>{% endif %}
+            {% if query or status_filter or platform_filter %}<a class="button button-ghost" href="/admin?view={{ selected_view }}&page_size={{ table_page.page_size }}#database">Tozalash</a>{% endif %}
           </form>
 
           <div class="table-scroll">
@@ -136,13 +283,13 @@
           <footer class="table-footer">
             <div class="page-size">
               <span>Har sahifada</span>
-              {% for size in [25, 50, 100] %}<a class="size-option{% if table_page.page_size == size %} active{% endif %}" href="/admin?view={{ selected_view }}&page_size={{ size }}{% if query %}&q={{ query|urlencode }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if platform_filter %}&platform={{ platform_filter }}{% endif %}">{{ size }}</a>{% endfor %}
+              {% for size in [25, 50, 100] %}<a class="size-option{% if table_page.page_size == size %} active{% endif %}" href="/admin?view={{ selected_view }}&page_size={{ size }}{% if query %}&q={{ query|urlencode }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if platform_filter %}&platform={{ platform_filter }}{% endif %}#database">{{ size }}</a>{% endfor %}
             </div>
             <p>{{ first_item }}–{{ last_item }} / {{ table_page.total }}</p>
             <nav class="pagination" aria-label="Sahifalar">
-              {% if table_page.page > 1 %}<a class="page-button" href="{{ page_url(table_page.page - 1) }}" aria-label="Oldingi sahifa">{{ icon('chevron-left') }}</a>{% else %}<span class="page-button disabled">{{ icon('chevron-left') }}</span>{% endif %}
-              {% for number in page_numbers %}<a class="page-button{% if number == table_page.page %} active{% endif %}" href="{{ page_url(number) }}"{% if number == table_page.page %} aria-current="page"{% endif %}>{{ number }}</a>{% endfor %}
-              {% if table_page.page < table_page.pages %}<a class="page-button" href="{{ page_url(table_page.page + 1) }}" aria-label="Keyingi sahifa">{{ icon('chevron-right') }}</a>{% else %}<span class="page-button disabled">{{ icon('chevron-right') }}</span>{% endif %}
+              {% if table_page.page > 1 %}<a class="page-button" href="{{ page_url(table_page.page - 1) }}#database" aria-label="Oldingi sahifa">{{ icon('chevron-left') }}</a>{% else %}<span class="page-button disabled">{{ icon('chevron-left') }}</span>{% endif %}
+              {% for number in page_numbers %}<a class="page-button{% if number == table_page.page %} active{% endif %}" href="{{ page_url(number) }}#database"{% if number == table_page.page %} aria-current="page"{% endif %}>{{ number }}</a>{% endfor %}
+              {% if table_page.page < table_page.pages %}<a class="page-button" href="{{ page_url(table_page.page + 1) }}#database" aria-label="Keyingi sahifa">{{ icon('chevron-right') }}</a>{% else %}<span class="page-button disabled">{{ icon('chevron-right') }}</span>{% endif %}
             </nav>
           </footer>
         </section>

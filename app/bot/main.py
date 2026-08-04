@@ -30,7 +30,6 @@ async def main() -> None:
             BotCommand(command="start", description="Botni ishga tushirish"),
             BotCommand(command="help", description="Foydalanish bo‘yicha yordam"),
             BotCommand(command="cancel", description="Faol vazifani bekor qilish"),
-            BotCommand(command="admin", description="Admin panel"),
         ]
     )
     try:

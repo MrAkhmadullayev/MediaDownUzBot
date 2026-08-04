@@ -8,7 +8,7 @@ celery_app = Celery(
     "mediadownuzbot",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.tasks.media_tasks"],
+    include=["app.tasks.media_tasks", "app.tasks.notification_tasks"],
 )
 
 celery_app.conf.update(

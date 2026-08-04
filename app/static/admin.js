@@ -27,4 +27,23 @@
     storeTheme(theme)
     applyTheme(theme)
   })
+
+  document.querySelectorAll("textarea[data-counter]").forEach(textarea => {
+    const counter = document.getElementById(textarea.dataset.counter)
+    const updateCounter = () => {
+      if (counter) {
+        counter.textContent = `${textarea.value.length} / ${textarea.maxLength}`
+      }
+    }
+    textarea.addEventListener("input", updateCounter)
+    updateCounter()
+  })
+
+  document.querySelectorAll("form[data-confirm]").forEach(form => {
+    form.addEventListener("submit", event => {
+      if (!window.confirm(form.dataset.confirm)) {
+        event.preventDefault()
+      }
+    })
+  })
 })()

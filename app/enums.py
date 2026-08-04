@@ -23,6 +23,31 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class SupportTicketStatus(StrEnum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+
+class SupportSender(StrEnum):
+    USER = "user"
+    ADMIN = "admin"
+
+
+class DeliveryStatus(StrEnum):
+    PENDING = "pending"
+    SENDING = "sending"
+    SENT = "sent"
+    FAILED = "failed"
+
+
+class BroadcastStatus(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
 TERMINAL_JOB_STATUSES = {
     JobStatus.SUCCESS,
     JobStatus.ERROR,

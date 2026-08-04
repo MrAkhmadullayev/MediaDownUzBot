@@ -1,17 +1,27 @@
 import re
+import uuid
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.dependencies import get_db_session, require_admin
-from app.admin.presentation import MODULES, STATUS_LABELS, module_by_key, present_table
+from app.admin.presentation import (
+    MODULES,
+    format_datetime,
+    module_by_key,
+    present_table,
+    status_options_for,
+)
 from app.config import Settings
-from app.enums import JobStatus, Platform
-from app.models import AdminSession
-from app.repositories import AdminRepository
+from app.enums import BroadcastStatus, DeliveryStatus, Platform, SupportSender, SupportTicketStatus
+from app.models import AdminSession, Broadcast, BroadcastDelivery, SupportMessage
+from app.repositories import AdminRepository, BroadcastRepository, SupportRepository
 from app.services.crypto import create_token, csrf_token, token_hash, tokens_match
+from app.tasks.celery_app import celery_app
 
 login_router = APIRouter(prefix="/admin", tags=["admin-auth"])
 admin_router = APIRouter(
@@ -21,6 +31,18 @@ admin_router = APIRouter(
 )
 
 TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
+NOTICE_MESSAGES = {
+    "support_sent": ("success", "Javob foydalanuvchiga yuborish navbatiga qo‘shildi."),
+    "support_delivered": ("success", "Javob foydalanuvchiga avval yetkazilgan."),
+    "support_sending": ("warning", "Javob ayni paytda yuborilmoqda."),
+    "support_closed": ("success", "Murojaat yopildi."),
+    "support_opened": ("success", "Murojaat qayta ochildi."),
+    "broadcast_queued": ("success", "Ommaviy xabar yuborish navbatiga qo‘shildi."),
+    "broadcast_processing": ("warning", "Bu ommaviy xabar ayni paytda yuborilmoqda."),
+    "broadcast_complete": ("success", "Bu ommaviy xabar barcha oluvchilarga yuborilgan."),
+    "broadcast_empty": ("warning", "Xabar yuboriladigan faol foydalanuvchi topilmadi."),
+    "queue_error": ("error", "Navbat xizmati javob bermadi. Qayta urinish tugmasidan foydalaning."),
+}
 
 
 @login_router.get("/login/{raw_token}", include_in_schema=False, response_model=None)
@@ -84,6 +106,8 @@ async def dashboard(
     q: str = Query(default="", max_length=100),
     status_filter: str = Query(default="", alias="status", max_length=32),
     platform_filter: str = Query(default="", alias="platform", max_length=16),
+    ticket: uuid.UUID | None = Query(default=None),
+    notice: str = Query(default="", max_length=32),
     session: AsyncSession = Depends(get_db_session),
     _: AdminSession = Depends(require_admin),
 ) -> HTMLResponse:
@@ -91,7 +115,10 @@ async def dashboard(
     allowed_views = {module["key"] for module in MODULES}
     selected_view = view if view in allowed_views else "download_jobs"
     selected_page_size = page_size if page_size in {25, 50, 100} else 25
-    selected_status = status_filter if status_filter in {item.value for item in JobStatus} else ""
+    status_options = status_options_for(selected_view)
+    selected_status = (
+        status_filter if status_filter in {value for value, _ in status_options} else ""
+    )
     selected_platform = (
         platform_filter if platform_filter in {item.value for item in Platform} else ""
     )
@@ -108,6 +135,15 @@ async def dashboard(
         selected_platform,
     )
     columns, rows = present_table(selected_view, table_page.items)
+    support_page = await SupportRepository.list_admin(session, page=1, page_size=30)
+    active_ticket = None
+    if ticket is not None:
+        active_ticket = await SupportRepository.get_details(session, ticket)
+    if active_ticket is None and support_page.items:
+        active_ticket = await SupportRepository.get_details(session, support_page.items[0].id)
+    recent_broadcasts = await BroadcastRepository.list_recent(session, limit=20)
+    open_support_count = await SupportRepository.count_open(session)
+    active_recipient_count = await BroadcastRepository.count_recipients(session)
     raw_session_token = request.state.admin_session_token
     raw_csrf_token = csrf_token(
         raw_session_token,
@@ -153,11 +189,237 @@ async def dashboard(
             "query": search_query,
             "status_filter": selected_status,
             "platform_filter": selected_platform,
-            "status_options": [(item.value, STATUS_LABELS[item]) for item in JobStatus],
+            "status_options": status_options,
             "platform_options": [(item.value, item.value.capitalize()) for item in Platform],
             "csrf_token": raw_csrf_token,
+            "support_tickets": support_page.items,
+            "active_ticket": active_ticket,
+            "open_support_count": open_support_count,
+            "recent_broadcasts": recent_broadcasts,
+            "active_recipient_count": active_recipient_count,
+            "format_datetime": format_datetime,
+            "notice_tone": NOTICE_MESSAGES.get(notice, ("", ""))[0],
+            "notice_message": NOTICE_MESSAGES.get(notice, ("", ""))[1],
         },
     )
+
+
+def _validate_csrf(
+    request: Request,
+    settings: Settings,
+    admin_session: AdminSession,
+    submitted: str,
+) -> None:
+    expected = csrf_token(
+        request.state.admin_session_token,
+        settings.FIELD_ENCRYPTION_KEY.get_secret_value(),
+    )
+    if not tokens_match(submitted, expected) or not tokens_match(
+        token_hash(submitted), admin_session.csrf_hash
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+def _admin_redirect(notice: str, fragment: str, **params: object) -> RedirectResponse:
+    query = {
+        key: str(value)
+        for key, value in {"notice": notice, **params}.items()
+        if value not in {None, ""}
+    }
+    return RedirectResponse(
+        url=f"/admin?{urlencode(query)}#{fragment}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+async def _mark_broadcast_queue_failed(
+    session: AsyncSession,
+    broadcast: Broadcast,
+    exception_name: str,
+) -> None:
+    broadcast.status = BroadcastStatus.FAILED
+    broadcast.completed_at = datetime.now(UTC)
+    await session.execute(
+        update(BroadcastDelivery)
+        .where(
+            BroadcastDelivery.broadcast_id == broadcast.id,
+            BroadcastDelivery.status != DeliveryStatus.SENT,
+        )
+        .values(
+            status=DeliveryStatus.FAILED,
+            error_detail=f"Queue:{exception_name}"[:500],
+        )
+    )
+    await BroadcastRepository.update_totals(session, broadcast)
+    await session.commit()
+
+
+@admin_router.get("/support/{ticket_id}", include_in_schema=False)
+async def open_support_ticket(ticket_id: uuid.UUID) -> RedirectResponse:
+    return _admin_redirect("", "support", ticket=ticket_id)
+
+
+@admin_router.post("/support/{ticket_id}/reply", include_in_schema=False)
+async def reply_to_support_ticket(
+    ticket_id: uuid.UUID,
+    request: Request,
+    body: str = Form(min_length=1, max_length=3500),
+    csrf: str = Form(alias="csrf_token", min_length=64, max_length=64),
+    admin_session: AdminSession = Depends(require_admin),
+    session: AsyncSession = Depends(get_db_session),
+) -> RedirectResponse:
+    settings: Settings = request.app.state.settings
+    _validate_csrf(request, settings, admin_session, csrf)
+    clean_body = body.strip()
+    if not clean_body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    ticket = await SupportRepository.get_details(session, ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    message = await SupportRepository.add_message(
+        session,
+        ticket,
+        SupportSender.ADMIN,
+        clean_body,
+    )
+    await session.commit()
+    try:
+        celery_app.send_task(
+            "notifications.support.deliver_reply",
+            args=[str(message.id)],
+            queue="notifications",
+        )
+    except Exception as exc:
+        message.delivery_status = DeliveryStatus.FAILED
+        message.error_detail = f"Queue:{type(exc).__name__}"[:500]
+        await session.commit()
+        return _admin_redirect("queue_error", "support", ticket=ticket_id)
+    return _admin_redirect("support_sent", "support", ticket=ticket_id)
+
+
+@admin_router.post("/support/{ticket_id}/status", include_in_schema=False)
+async def change_support_status(
+    ticket_id: uuid.UUID,
+    request: Request,
+    ticket_status: SupportTicketStatus = Form(alias="status"),
+    csrf: str = Form(alias="csrf_token", min_length=64, max_length=64),
+    admin_session: AdminSession = Depends(require_admin),
+    session: AsyncSession = Depends(get_db_session),
+) -> RedirectResponse:
+    settings: Settings = request.app.state.settings
+    _validate_csrf(request, settings, admin_session, csrf)
+    ticket = await SupportRepository.get_details(session, ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await SupportRepository.set_status(session, ticket, ticket_status)
+    await session.commit()
+    notice = "support_closed" if ticket_status == SupportTicketStatus.CLOSED else "support_opened"
+    return _admin_redirect(notice, "support", ticket=ticket_id)
+
+
+@admin_router.post("/support/messages/{message_id}/retry", include_in_schema=False)
+async def retry_support_message(
+    message_id: uuid.UUID,
+    request: Request,
+    csrf: str = Form(alias="csrf_token", min_length=64, max_length=64),
+    admin_session: AdminSession = Depends(require_admin),
+    session: AsyncSession = Depends(get_db_session),
+) -> RedirectResponse:
+    settings: Settings = request.app.state.settings
+    _validate_csrf(request, settings, admin_session, csrf)
+    message = await session.get(SupportMessage, message_id)
+    if message is None or message.sender != SupportSender.ADMIN:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if message.delivery_status == DeliveryStatus.SENT:
+        return _admin_redirect("support_delivered", "support", ticket=message.ticket_id)
+    if message.delivery_status == DeliveryStatus.SENDING:
+        return _admin_redirect("support_sending", "support", ticket=message.ticket_id)
+    message.delivery_status = DeliveryStatus.PENDING
+    message.error_detail = None
+    await session.commit()
+    try:
+        celery_app.send_task(
+            "notifications.support.deliver_reply",
+            args=[str(message.id)],
+            queue="notifications",
+        )
+    except Exception as exc:
+        message.delivery_status = DeliveryStatus.FAILED
+        message.error_detail = f"Queue:{type(exc).__name__}"[:500]
+        await session.commit()
+        return _admin_redirect("queue_error", "support", ticket=message.ticket_id)
+    return _admin_redirect("support_sent", "support", ticket=message.ticket_id)
+
+
+@admin_router.post("/broadcasts", include_in_schema=False)
+async def create_broadcast(
+    request: Request,
+    body: str = Form(min_length=1, max_length=3500),
+    csrf: str = Form(alias="csrf_token", min_length=64, max_length=64),
+    admin_session: AdminSession = Depends(require_admin),
+    session: AsyncSession = Depends(get_db_session),
+) -> RedirectResponse:
+    settings: Settings = request.app.state.settings
+    _validate_csrf(request, settings, admin_session, csrf)
+    clean_body = body.strip()
+    if not clean_body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    broadcast = await BroadcastRepository.create(
+        session,
+        clean_body,
+        admin_session.telegram_id,
+    )
+    await session.commit()
+    if not broadcast.total_count:
+        return _admin_redirect("broadcast_empty", "broadcasts")
+    try:
+        celery_app.send_task(
+            "notifications.broadcast.deliver",
+            args=[str(broadcast.id)],
+            queue="notifications",
+        )
+    except Exception as exc:
+        await _mark_broadcast_queue_failed(session, broadcast, type(exc).__name__)
+        return _admin_redirect("queue_error", "broadcasts")
+    return _admin_redirect("broadcast_queued", "broadcasts")
+
+
+@admin_router.post("/broadcasts/{broadcast_id}/retry", include_in_schema=False)
+async def retry_broadcast(
+    broadcast_id: uuid.UUID,
+    request: Request,
+    csrf: str = Form(alias="csrf_token", min_length=64, max_length=64),
+    admin_session: AdminSession = Depends(require_admin),
+    session: AsyncSession = Depends(get_db_session),
+) -> RedirectResponse:
+    settings: Settings = request.app.state.settings
+    _validate_csrf(request, settings, admin_session, csrf)
+    broadcast = await BroadcastRepository.get_with_deliveries(session, broadcast_id)
+    if broadcast is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if broadcast.status == BroadcastStatus.PROCESSING:
+        return _admin_redirect("broadcast_processing", "broadcasts")
+    if broadcast.status == BroadcastStatus.COMPLETED:
+        return _admin_redirect("broadcast_complete", "broadcasts")
+    for delivery in broadcast.deliveries:
+        if delivery.status != DeliveryStatus.SENT:
+            delivery.status = DeliveryStatus.PENDING
+            delivery.error_detail = None
+            delivery.telegram_message_id = None
+            delivery.sent_at = None
+    broadcast.status = BroadcastStatus.PENDING
+    broadcast.completed_at = None
+    await session.commit()
+    try:
+        celery_app.send_task(
+            "notifications.broadcast.deliver",
+            args=[str(broadcast.id)],
+            queue="notifications",
+        )
+    except Exception as exc:
+        await _mark_broadcast_queue_failed(session, broadcast, type(exc).__name__)
+        return _admin_redirect("queue_error", "broadcasts")
+    return _admin_redirect("broadcast_queued", "broadcasts")
 
 
 @admin_router.post("/logout", include_in_schema=False)
@@ -168,14 +430,7 @@ async def logout(
     session: AsyncSession = Depends(get_db_session),
 ) -> RedirectResponse:
     settings: Settings = request.app.state.settings
-    expected = csrf_token(
-        request.state.admin_session_token,
-        settings.FIELD_ENCRYPTION_KEY.get_secret_value(),
-    )
-    if not tokens_match(csrf, expected) or not tokens_match(
-        token_hash(csrf), admin_session.csrf_hash
-    ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    _validate_csrf(request, settings, admin_session, csrf)
     await session.delete(admin_session)
     await session.commit()
     response = RedirectResponse(url="/admin/signed-out", status_code=status.HTTP_303_SEE_OTHER)
