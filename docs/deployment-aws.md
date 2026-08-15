@@ -42,7 +42,7 @@ chmod 750 videos
 chmod 600 .env
 ```
 
-`.env` production qiymatlari, jumladan `BOT_TOKEN`, `TELEGRAM_API_ID` va `TELEGRAM_API_HASH` bilan to‘ldiriladi. API qiymatlari [my.telegram.org/apps](https://my.telegram.org/apps) sahifasidan olinadi. `YTDLP_POT_PROVIDER_URL=http://youtube-pot-provider:4416` Compose ichki xizmatiga ishora qiladi va public port talab qilmaydi. AWS public IP YouTube tomonidan cheklansa `YTDLP_PROXY_URL`ga faqat ishonchli shaxsiy outbound proxy yoziladi.
+`.env` production qiymatlari, jumladan `BOT_TOKEN`, `TELEGRAM_API_ID` va `TELEGRAM_API_HASH` bilan to‘ldiriladi. API qiymatlari [my.telegram.org/apps](https://my.telegram.org/apps) sahifasidan olinadi. `YTDLP_POT_PROVIDER_URL=http://youtube-pot-provider:4416` Compose ichki xizmatiga ishora qiladi va public port talab qilmaydi. AWS public IP YouTube tomonidan cheklansa `YTDLP_PROXY_URL`, Instagram tomonidan cheklansa `INSTAGRAM_PROXY_URL`ga faqat ishonchli shaxsiy outbound proxy yoziladi. Cookie va proxy qiymatlari GitHub variables/secrets’ga ko‘chirilmaydi; ular serverdagi `0600` huquqli `.env` hamda read-only secret fayllarda qoladi.
 
 Lokal Bot API’ga birinchi o‘tishda EC2 ichida botning bulut API sessiyasini bir marta yoping:
 

@@ -1,4 +1,5 @@
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,12 @@ class MediaInfo:
     duration_seconds: int | None
     qualities: list[int]
     quality_sizes: dict[str, dict[str, int | None]]
+
+
+@dataclass(frozen=True, slots=True)
+class AccessAttempt:
+    use_cookies: bool
+    proxy_url: str | None
 
 
 class MediaKind(StrEnum):
@@ -84,19 +91,25 @@ class MediaService:
                 qualities=[],
                 quality_sizes={"video": {}, "audio": {}},
             )
-        for use_cookies in self._youtube_cookie_attempts():
+        attempts = self._youtube_access_attempts()
+        last_error: MediaProcessingError | None = None
+        for index, attempt in enumerate(attempts):
             try:
-                return self._probe_youtube(url, use_cookies=use_cookies)
-            except MediaProcessingError:
-                raise
+                return self._probe_youtube(
+                    url,
+                    use_cookies=attempt.use_cookies,
+                    proxy_url=attempt.proxy_url,
+                )
+            except MediaProcessingError as error:
+                last_error = error
             except (DownloadError, RequestError) as exc:
-                error = self._mapped_error(str(exc))
-                if self._should_retry_with_cookies(error, use_cookies):
-                    continue
-                raise error from None
+                last_error = self._mapped_error(str(exc))
             except Exception as exc:
                 raise MediaProcessingError("internal", type(exc).__name__) from None
-        raise MediaProcessingError("cookies_required")
+            if self._should_try_next_access(last_error, index, attempts):
+                continue
+            raise last_error
+        raise last_error or MediaProcessingError("source_error")
 
     def download(
         self,
@@ -108,8 +121,10 @@ class MediaService:
         work_dir = self._prepare_work_dir(job_id)
         if self._is_instagram_url(url):
             return self._download_instagram(url, work_dir)
-        for use_cookies in self._youtube_cookie_attempts():
-            if use_cookies:
+        attempts = self._youtube_access_attempts()
+        last_error: MediaProcessingError | None = None
+        for index, attempt in enumerate(attempts):
+            if index:
                 self._clear_work_dir(work_dir)
             try:
                 return self._download_youtube(
@@ -117,21 +132,32 @@ class MediaService:
                     work_dir,
                     media_type,
                     quality,
-                    use_cookies=use_cookies,
+                    use_cookies=attempt.use_cookies,
+                    proxy_url=attempt.proxy_url,
                 )
-            except MediaProcessingError:
-                raise
+            except MediaProcessingError as error:
+                last_error = error
             except (DownloadError, RequestError) as exc:
-                error = self._mapped_error(str(exc))
-                if self._should_retry_with_cookies(error, use_cookies):
-                    continue
-                raise error from None
+                last_error = self._mapped_error(str(exc))
             except Exception as exc:
                 raise MediaProcessingError("internal", type(exc).__name__) from None
-        raise MediaProcessingError("cookies_required")
+            if self._should_try_next_access(last_error, index, attempts):
+                continue
+            raise last_error
+        raise last_error or MediaProcessingError("source_error")
 
-    def _probe_youtube(self, url: str, *, use_cookies: bool) -> MediaInfo:
-        with self._prepared_options(url, use_cookies=use_cookies) as options:
+    def _probe_youtube(
+        self,
+        url: str,
+        *,
+        use_cookies: bool,
+        proxy_url: str | None,
+    ) -> MediaInfo:
+        with self._prepared_options(
+            url,
+            use_cookies=use_cookies,
+            proxy_url=proxy_url,
+        ) as options:
             options.update({"skip_download": True})
             with yt_dlp.YoutubeDL(options) as downloader:
                 info = downloader.extract_info(url, download=False)
@@ -153,8 +179,13 @@ class MediaService:
         quality: str,
         *,
         use_cookies: bool,
+        proxy_url: str | None,
     ) -> DownloadedMedia:
-        with self._prepared_options(url, use_cookies=use_cookies) as options:
+        with self._prepared_options(
+            url,
+            use_cookies=use_cookies,
+            proxy_url=proxy_url,
+        ) as options:
             options.update(
                 {
                     "paths": {"home": str(work_dir), "temp": str(work_dir)},
@@ -185,8 +216,28 @@ class MediaService:
         )
 
     def _download_instagram(self, url: str, work_dir: Path) -> DownloadedMedia:
+        attempts = self._instagram_access_attempts()
+        last_error: MediaProcessingError | None = None
+        for index, attempt in enumerate(attempts):
+            if index:
+                self._clear_work_dir(work_dir)
+            try:
+                return self._download_instagram_once(url, work_dir, attempt)
+            except MediaProcessingError as error:
+                last_error = error
+            if self._should_try_next_access(last_error, index, attempts):
+                continue
+            raise last_error
+        raise last_error or MediaProcessingError("source_error", "gallery-dl:UnknownFailure")
+
+    def _download_instagram_once(
+        self,
+        url: str,
+        work_dir: Path,
+        attempt: AccessAttempt,
+    ) -> DownloadedMedia:
         try:
-            with self._prepared_instagram_cookie() as cookie_file:
+            with self._prepared_instagram_cookie(use_cookies=attempt.use_cookies) as cookie_file:
                 command = [
                     sys.executable,
                     "-m",
@@ -221,6 +272,8 @@ class MediaService:
                 ]
                 if cookie_file is not None:
                     command.extend(("-C", str(cookie_file)))
+                if attempt.proxy_url is not None:
+                    command.extend(("--proxy", attempt.proxy_url))
                 command.append(url)
                 result = subprocess.run(
                     command,
@@ -281,7 +334,12 @@ class MediaService:
                 removed += 1
         return removed
 
-    def _base_options(self, url: str | None = None) -> dict[str, Any]:
+    def _base_options(
+        self,
+        url: str | None = None,
+        *,
+        proxy_url: str | None = None,
+    ) -> dict[str, Any]:
         options: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
@@ -302,9 +360,8 @@ class MediaService:
             options["extractor_args"] = {
                 "youtubepot-bgutilhttp": {"base_url": [provider_url]},
             }
-        proxy_url = self.settings.YTDLP_PROXY_URL
-        if proxy_url:
-            options["proxy"] = proxy_url.get_secret_value()
+        if proxy_url is not None:
+            options["proxy"] = proxy_url
         target_shortcode = instagram_story_target_shortcode(url) if url else None
         if target_shortcode:
             options.pop("playlist_items")
@@ -317,8 +374,9 @@ class MediaService:
         url: str | None = None,
         *,
         use_cookies: bool = True,
+        proxy_url: str | None = None,
     ) -> Iterator[dict[str, Any]]:
-        options = self._base_options(url)
+        options = self._base_options(url, proxy_url=proxy_url)
         if not use_cookies:
             yield options
             return
@@ -335,21 +393,46 @@ class MediaService:
             options["cookiefile"] = str(cookie_file)
             yield options
 
-    def _youtube_cookie_attempts(self) -> tuple[bool, ...]:
-        if self.settings.YTDLP_COOKIES_FILE is None:
-            return (False,)
-        return False, True
-
-    def _should_retry_with_cookies(
-        self,
-        error: MediaProcessingError,
-        use_cookies: bool,
-    ) -> bool:
-        return (
-            not use_cookies
-            and self.settings.YTDLP_COOKIES_FILE is not None
-            and error.code in {"cookies_required", "login_required", "private"}
+    def _youtube_access_attempts(self) -> tuple[AccessAttempt, ...]:
+        return self._access_attempts(
+            self.settings.YTDLP_COOKIES_FILE,
+            self.settings.YTDLP_PROXY_URL,
         )
+
+    def _instagram_access_attempts(self) -> tuple[AccessAttempt, ...]:
+        return self._access_attempts(
+            self.settings.INSTAGRAM_COOKIES_FILE,
+            self.settings.INSTAGRAM_PROXY_URL,
+        )
+
+    @staticmethod
+    def _access_attempts(cookie_file: Path | None, proxy: Any) -> tuple[AccessAttempt, ...]:
+        cookie_available = cookie_file is not None and cookie_file.is_file()
+        proxy_url = proxy.get_secret_value() if proxy is not None else None
+        attempts = [AccessAttempt(use_cookies=False, proxy_url=None)]
+        if cookie_available:
+            attempts.append(AccessAttempt(use_cookies=True, proxy_url=None))
+        if proxy_url:
+            attempts.append(AccessAttempt(use_cookies=False, proxy_url=proxy_url))
+            if cookie_available:
+                attempts.append(AccessAttempt(use_cookies=True, proxy_url=proxy_url))
+        return tuple(attempts)
+
+    @staticmethod
+    def _should_try_next_access(
+        error: MediaProcessingError,
+        index: int,
+        attempts: tuple[AccessAttempt, ...],
+    ) -> bool:
+        return index + 1 < len(attempts) and error.code in {
+            "cookies_required",
+            "login_required",
+            "private",
+            "network",
+            "rate_limited",
+            "source_error",
+            "timeout",
+        }
 
     @staticmethod
     def _clear_work_dir(work_dir: Path) -> None:
@@ -360,7 +443,14 @@ class MediaService:
                 child.unlink(missing_ok=True)
 
     @contextmanager
-    def _prepared_instagram_cookie(self) -> Iterator[Path | None]:
+    def _prepared_instagram_cookie(
+        self,
+        *,
+        use_cookies: bool = True,
+    ) -> Iterator[Path | None]:
+        if not use_cookies:
+            yield None
+            return
         source = self.settings.INSTAGRAM_COOKIES_FILE
         if source is None:
             yield None
@@ -734,14 +824,83 @@ class MediaService:
         for needles, code in mappings:
             if any(needle in lowered for needle in needles):
                 return MediaProcessingError(code)
-        return MediaProcessingError("internal", "DownloadError")
+        return MediaProcessingError("source_error", "yt-dlp:DownloadError")
 
     @classmethod
     def _mapped_instagram_error(cls, message: str) -> MediaProcessingError:
+        lowered = message.lower()
+        detail = cls._extractor_error_detail(message, "gallery-dl")
+        mappings = (
+            (
+                (
+                    "authenticationerror",
+                    "authorizationerror",
+                    "login required",
+                    "log in to instagram",
+                    "challenge_required",
+                    "challenge required",
+                    "checkpoint_required",
+                    "checkpoint required",
+                    "cookies are required",
+                    "sessionid",
+                ),
+                "login_required",
+            ),
+            (
+                (
+                    "429",
+                    "too many requests",
+                    "rate limit",
+                    "ratelimit",
+                    "please wait a few minutes",
+                    "403 forbidden",
+                    "http error: 403",
+                    "httperror: '403",
+                ),
+                "rate_limited",
+            ),
+            (("notfounderror", "404 not found", "httperror: '404"), "unavailable"),
+            (("timed out", "timeout"), "timeout"),
+            (
+                ("connection", "network", "ssl", "handshake", "name resolution"),
+                "network",
+            ),
+            (("unsupported url", "unsupportedurlerror"), "unsupported"),
+            (
+                (
+                    "file is larger",
+                    "file size exceeds",
+                    "filesize-max",
+                    "maximum filesize",
+                ),
+                "too_large",
+            ),
+        )
+        for needles, code in mappings:
+            if any(needle in lowered for needle in needles):
+                return MediaProcessingError(code, detail)
         error = cls._mapped_error(message)
         if error.code == "cookies_required":
-            return MediaProcessingError("login_required")
-        return error
+            return MediaProcessingError("login_required", detail)
+        if error.code == "internal":
+            return MediaProcessingError("source_error", detail)
+        return MediaProcessingError(error.code, detail)
+
+    @staticmethod
+    def _extractor_error_detail(message: str, source: str) -> str:
+        error_match = re.search(
+            r"\b([A-Z][A-Za-z0-9_.]*(?:Error|Exception))\b",
+            message,
+        )
+        status_match = re.search(r"\b(?:HTTP(?: Error)?\s*[:=]?\s*)?([45]\d{2})\b", message)
+        parts = [source]
+        if error_match:
+            parts.append(error_match.group(1).rsplit(".", maxsplit=1)[-1])
+        if status_match:
+            parts.append(f"HTTP{status_match.group(1)}")
+        if len(parts) == 1:
+            parts.append("UnknownFailure")
+        return ":".join(parts)[:160]
 
     @staticmethod
     def _is_oversized_output(message: str) -> bool:

@@ -28,7 +28,7 @@ def test_base_options_enable_pot_provider_and_optional_proxy(tmp_path) -> None:
         )
     )
 
-    options = service._base_options()
+    options = service._base_options(proxy_url="socks5h://proxy.example:1080")
 
     assert options["extractor_args"] == {
         "youtubepot-bgutilhttp": {"base_url": ["http://pot-provider:4416"]}
@@ -130,6 +130,39 @@ def test_youtube_probe_tries_public_access_before_cookie_fallback(tmp_path, monk
 
     assert info.title == "Sinov"
     assert attempts == [False, True]
+
+
+def test_youtube_probe_uses_proxy_after_direct_access_fails(tmp_path, monkeypatch) -> None:
+    attempts: list[str | None] = []
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def extract_info(self, url, *, download):
+            attempts.append(self.options.get("proxy"))
+            if "proxy" not in self.options:
+                raise yt_dlp.utils.DownloadError("Sign in to confirm you're not a bot")
+            return {"title": "Proxy orqali", "formats": []}
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYoutubeDL)
+    service = MediaService(
+        Settings(
+            VIDEOS_DIR=tmp_path,
+            YTDLP_PROXY_URL="https://user:password@proxy.example:443",
+        )
+    )
+
+    info = service.probe("https://youtu.be/4uDX2GD8ckg")
+
+    assert info.title == "Proxy orqali"
+    assert attempts == [None, "https://user:password@proxy.example:443"]
 
 
 def test_public_youtube_probe_ignores_unneeded_stale_cookie(tmp_path, monkeypatch) -> None:
@@ -236,10 +269,17 @@ def test_instagram_download_uses_cookie_and_safe_argument_list(tmp_path, monkeyp
     cookie_file = tmp_path / "instagram-cookies.txt"
     cookie_file.write_text("# Netscape HTTP Cookie File\n")
     service = MediaService(Settings(VIDEOS_DIR=tmp_path, INSTAGRAM_COOKIES_FILE=cookie_file))
-    captured: list[str] = []
+    captured: list[list[str]] = []
 
     def fake_run(command, **kwargs):
-        captured.extend(command)
+        captured.append(command)
+        if len(captured) == 1:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                "AuthenticationError: login required",
+            )
         destination = Path(command[command.index("-D") + 1])
         (destination / "001_1.jpg").write_bytes(b"photo")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -252,16 +292,60 @@ def test_instagram_download_uses_cookie_and_safe_argument_list(tmp_path, monkeyp
         "best",
     )
 
-    assert captured[1:3] == ["-m", "gallery_dl"]
-    assert "-C" in captured
-    assert captured[-1] == "https://www.instagram.com/p/DOdWFmdCoKQ/"
-    assert not Path(captured[captured.index("-C") + 1]).exists()
+    assert captured[0][1:3] == ["-m", "gallery_dl"]
+    assert "-C" not in captured[0]
+    assert "-C" in captured[1]
+    assert captured[1][-1] == "https://www.instagram.com/p/DOdWFmdCoKQ/"
+    assert not Path(captured[1][captured[1].index("-C") + 1]).exists()
+
+
+def test_instagram_download_uses_proxy_after_rate_limit(tmp_path, monkeypatch) -> None:
+    service = MediaService(
+        Settings(
+            VIDEOS_DIR=tmp_path,
+            INSTAGRAM_PROXY_URL="socks5h://user:password@proxy.example:1080",
+        )
+    )
+    captured: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        captured.append(command)
+        if "--proxy" not in command:
+            return subprocess.CompletedProcess(command, 1, "", "HttpError: '403 Forbidden'")
+        destination = Path(command[command.index("-D") + 1])
+        (destination / "001_1.jpg").write_bytes(b"photo")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = service.download(
+        "https://www.instagram.com/p/DOdWFmdCoKQ/",
+        uuid.uuid4(),
+        MediaType.VIDEO,
+        "best",
+    )
+
+    assert result.items[0].kind == MediaKind.PHOTO
+    assert "--proxy" not in captured[0]
+    assert captured[1][captured[1].index("--proxy") + 1] == (
+        "socks5h://user:password@proxy.example:1080"
+    )
 
 
 def test_instagram_cookie_error_is_not_reported_as_youtube_verification() -> None:
     error = MediaService._mapped_instagram_error("Cookies are required to log in")
 
     assert error.code == "login_required"
+
+
+def test_unknown_instagram_error_is_safe_and_actionable() -> None:
+    error = MediaService._mapped_instagram_error(
+        "ExtractorError: failed for https://instagram.com/p/secret/?token=sensitive"
+    )
+
+    assert error.code == "source_error"
+    assert error.detail == "gallery-dl:ExtractorError"
+    assert "instagram.com" not in error.detail
 
 
 def test_instagram_oversized_download_is_reported_from_extractor_output(

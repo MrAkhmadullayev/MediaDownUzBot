@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     YTDLP_POT_PROVIDER_URL: str | None = "http://youtube-pot-provider:4416"
     YTDLP_PROXY_URL: SecretStr | None = None
     INSTAGRAM_COOKIES_FILE: Path | None = None
+    INSTAGRAM_PROXY_URL: SecretStr | None = None
 
     @field_validator("ADMIN_BASE_URL", "TELEGRAM_API_BASE_URL")
     @classmethod
@@ -73,7 +74,7 @@ class Settings(BaseSettings):
             raise ValueError("PO-token provider URL noto'g'ri")
         return normalized
 
-    @field_validator("YTDLP_PROXY_URL", mode="before")
+    @field_validator("YTDLP_PROXY_URL", "INSTAGRAM_PROXY_URL", mode="before")
     @classmethod
     def validate_optional_proxy_url(cls, value: object) -> str | None:
         if isinstance(value, SecretStr):
@@ -90,7 +91,7 @@ class Settings(BaseSettings):
             or not parsed.hostname
             or any(character.isspace() for character in raw_value)
         ):
-            raise ValueError("yt-dlp proxy URL noto'g'ri")
+            raise ValueError("Media proxy URL noto'g'ri")
         return raw_value
 
     @property

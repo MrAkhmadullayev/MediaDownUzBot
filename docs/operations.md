@@ -70,7 +70,13 @@ docker compose ps youtube-pot-provider worker
 docker compose logs --tail=100 youtube-pot-provider worker
 ```
 
-`youtube-pot-provider` `healthy` bo‘lishi kerak. Worker public videoni cookiesiz birinchi marta tekshiradi va faqat autentifikatsiya xatosida cookie bilan qayta urinadi. Shuning uchun eskirgan cookie oddiy public videoga majburan yuborilmaydi. Provider sog‘lom, cookie yangilangan, lekin ayni xato barcha public videolarda davom etsa YouTube EC2 public IP manzilini cheklagan bo‘lishi mumkin. Bunda `.env` dagi `YTDLP_PROXY_URL`ga ishonchli shaxsiy HTTP(S) yoki SOCKS proxy kiriting va worker’ni qayta yarating. Bepul proxy TLS, maxfiylik va barqarorlik xavfini oshiradi.
+`youtube-pot-provider` `healthy` bo‘lishi kerak. Worker public videoni to‘g‘ridan-to‘g‘ri cookiesiz tekshiradi; zarur bo‘lsa cookie, sozlangan proxy va cookie+proxy orqali avtomatik qayta urinadi. Shuning uchun eskirgan cookie oddiy public videoga majburan yuborilmaydi. Provider sog‘lom, cookie yangilangan, lekin ayni xato barcha public videolarda davom etsa YouTube EC2 public IP manzilini cheklagan bo‘lishi mumkin. Bunda `.env` dagi `YTDLP_PROXY_URL`ga ishonchli shaxsiy HTTP(S) yoki SOCKS proxy kiriting va worker’ni qayta yarating. Bepul proxy TLS, maxfiylik va barqarorlik xavfini oshiradi.
+
+## Instagram kirish va rate-limit muammosi
+
+Worker Instagram media uchun ham to‘g‘ridan-to‘g‘ri public, cookie, proxy va cookie+proxy urinishlarini avtomatik ketma-ket bajaradi. Shu sababli eskirgan Instagram cookie oddiy public post, Reel yoki carousel’ni bloklamaydi. Yopiq profil, Story yoki Highlight login talab qilsa yaroqli `INSTAGRAM_COOKIES_FILE` kerak. EC2 IP manzili `403` yoki `429` bilan cheklansa `.env` dagi `INSTAGRAM_PROXY_URL`ga ishonchli shaxsiy proxy kiriting va worker’ni qayta yarating. Extractor javobi bazaga faqat xavfsiz xato sinfi va HTTP kodi sifatida yoziladi; URL tokeni, cookie va proxy credentiallari saqlanmaydi.
+
+Cookie’larni serverda akkaunt login/paroli bilan avtomatik yangilamang. 2FA, captcha va challenge sabab bu barqaror emas va akkaunt bloklanishiga olib kelishi mumkin. Sessiya eskirganda yangi cookie’ni administrator xavfsiz eksport qiladi; qolgan qayta urinish va proxy failover’ni worker avtomatik boshqaradi.
 
 ## Instagram TLS muammosi
 

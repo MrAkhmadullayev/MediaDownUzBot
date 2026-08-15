@@ -28,11 +28,13 @@ def test_empty_cookie_path_is_none() -> None:
         YTDLP_POT_PROVIDER_URL="",
         YTDLP_PROXY_URL="",
         INSTAGRAM_COOKIES_FILE="",
+        INSTAGRAM_PROXY_URL="",
     )
     assert settings.YTDLP_COOKIES_FILE is None
     assert settings.YTDLP_POT_PROVIDER_URL is None
     assert settings.YTDLP_PROXY_URL is None
     assert settings.INSTAGRAM_COOKIES_FILE is None
+    assert settings.INSTAGRAM_PROXY_URL is None
 
 
 @pytest.mark.parametrize(
@@ -42,6 +44,7 @@ def test_empty_cookie_path_is_none() -> None:
         ("YTDLP_POT_PROVIDER_URL", "http://user:password@provider:4416"),
         ("YTDLP_PROXY_URL", "ftp://proxy.example"),
         ("YTDLP_PROXY_URL", "https://proxy.example/ bad"),
+        ("INSTAGRAM_PROXY_URL", "ftp://proxy.example"),
     ],
 )
 def test_invalid_ytdlp_service_urls_are_rejected(field, value) -> None:

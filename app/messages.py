@@ -99,6 +99,10 @@ ERROR_MESSAGES = {
         "Administrator tasdiqlash ma’lumotini yangilagach qayta urinib ko‘ring."
     ),
     "network": "Tarmoq bilan vaqtinchalik muammo yuz berdi. Qayta urinib ko‘ring.",
+    "source_error": (
+        "Media manbasi vaqtincha javob bermadi yoki kirishni chekladi. "
+        "Birozdan keyin qayta urinib ko‘ring."
+    ),
     "invalid_media": "Havolada yuklab olinadigan rasm, video, GIF yoki audio topilmadi.",
     "internal": "Kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko‘ring.",
 }
