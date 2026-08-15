@@ -332,8 +332,58 @@ def test_instagram_download_uses_proxy_after_rate_limit(tmp_path, monkeypatch) -
     )
 
 
+def test_instagram_reel_falls_back_to_ytdlp_after_login_redirect(tmp_path, monkeypatch) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def extract_info(self, url, *, download):
+            destination = Path(self.options["paths"]["home"])
+            (destination / "instagram.mp4").write_bytes(b"video")
+            return {"title": "Instagram video", "duration": 12}
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            4,
+            "",
+            "AbortExtraction: HTTP redirect to login page "
+            "(https://www.instagram.com/accounts/login/)",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYoutubeDL)
+    service = MediaService(Settings(VIDEOS_DIR=tmp_path))
+
+    result = service.download(
+        "https://www.instagram.com/reel/DcB15I6Mz2R/",
+        uuid.uuid4(),
+        MediaType.VIDEO,
+        "best",
+    )
+
+    assert result.path.name == "instagram.mp4"
+    assert result.title == "Instagram video"
+    assert result.duration_seconds == 12
+    assert result.media_items[0].kind == MediaKind.VIDEO
+
+
 def test_instagram_cookie_error_is_not_reported_as_youtube_verification() -> None:
     error = MediaService._mapped_instagram_error("Cookies are required to log in")
+
+    assert error.code == "login_required"
+
+
+def test_instagram_login_redirect_is_mapped_to_login_requirement() -> None:
+    error = MediaService._mapped_instagram_error(
+        "HTTP redirect to login page (https://www.instagram.com/accounts/login/)"
+    )
 
     assert error.code == "login_required"
 

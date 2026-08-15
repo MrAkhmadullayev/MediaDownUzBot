@@ -227,8 +227,27 @@ class MediaService:
                 last_error = error
             if self._should_try_next_access(last_error, index, attempts):
                 continue
-            raise last_error
-        raise last_error or MediaProcessingError("source_error", "gallery-dl:UnknownFailure")
+            if last_error.code not in {
+                "cookies_required",
+                "login_required",
+                "private",
+                "network",
+                "rate_limited",
+                "source_error",
+                "timeout",
+            }:
+                raise last_error
+            break
+        gallery_error = last_error or MediaProcessingError(
+            "source_error", "gallery-dl:UnknownFailure"
+        )
+        self._clear_work_dir(work_dir)
+        try:
+            return self._download_instagram_video(url, work_dir)
+        except MediaProcessingError as error:
+            if error.code in {"invalid_media", "unsupported"}:
+                raise gallery_error from None
+            raise
 
     def _download_instagram_once(
         self,
@@ -306,6 +325,59 @@ class MediaService:
             raise MediaProcessingError("timeout") from None
         except OSError as exc:
             raise MediaProcessingError("internal", type(exc).__name__) from None
+
+    def _download_instagram_video(self, url: str, work_dir: Path) -> DownloadedMedia:
+        attempts = self._instagram_access_attempts()
+        last_error: MediaProcessingError | None = None
+        for index, attempt in enumerate(attempts):
+            if index:
+                self._clear_work_dir(work_dir)
+            try:
+                return self._download_instagram_video_once(url, work_dir, attempt)
+            except MediaProcessingError as error:
+                last_error = error
+            except (DownloadError, RequestError) as exc:
+                last_error = self._mapped_instagram_ytdlp_error(str(exc))
+            except Exception as exc:
+                raise MediaProcessingError("internal", type(exc).__name__) from None
+            if self._should_try_next_access(last_error, index, attempts):
+                continue
+            raise last_error
+        raise last_error or MediaProcessingError("source_error", "yt-dlp:DownloadError")
+
+    def _download_instagram_video_once(
+        self,
+        url: str,
+        work_dir: Path,
+        attempt: AccessAttempt,
+    ) -> DownloadedMedia:
+        with self._prepared_instagram_cookie(use_cookies=attempt.use_cookies) as cookie_file:
+            options = self._base_options(url, proxy_url=attempt.proxy_url)
+            options.update(
+                {
+                    "paths": {"home": str(work_dir), "temp": str(work_dir)},
+                    "outtmpl": {"default": "instagram.%(ext)s"},
+                    "overwrites": True,
+                    "continuedl": False,
+                    "max_filesize": self.settings.upload_limit_bytes,
+                }
+            )
+            if cookie_file is not None:
+                options["cookiefile"] = str(cookie_file)
+            with yt_dlp.YoutubeDL(options) as downloader:
+                info = downloader.extract_info(url, download=True)
+        media = self._single_media(info)
+        path = self._find_output_file(work_dir)
+        path.chmod(0o644)
+        size = path.stat().st_size
+        if size > self.settings.upload_limit_bytes:
+            raise MediaProcessingError("too_large")
+        return DownloadedMedia(
+            path=path,
+            title=self._title(media),
+            duration_seconds=self._duration(media),
+            size_bytes=size,
+        )
 
     def cleanup(self, job_id: uuid.UUID) -> None:
         root = self.settings.VIDEOS_DIR.resolve()
@@ -843,6 +915,8 @@ class MediaService:
                     "checkpoint required",
                     "cookies are required",
                     "sessionid",
+                    "redirect to login page",
+                    "/accounts/login/",
                 ),
                 "login_required",
             ),
@@ -885,6 +959,12 @@ class MediaService:
         if error.code == "internal":
             return MediaProcessingError("source_error", detail)
         return MediaProcessingError(error.code, detail)
+
+    @classmethod
+    def _mapped_instagram_ytdlp_error(cls, message: str) -> MediaProcessingError:
+        error = cls._mapped_error(message)
+        code = "login_required" if error.code == "cookies_required" else error.code
+        return MediaProcessingError(code, "yt-dlp:DownloadError")
 
     @staticmethod
     def _extractor_error_detail(message: str, source: str) -> str:
