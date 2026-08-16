@@ -1,6 +1,6 @@
 FROM denoland/deno:bin-2.9.4 AS deno_runtime
 
-FROM python:3.12.11-slim-bookworm
+FROM python:3.14.7-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
